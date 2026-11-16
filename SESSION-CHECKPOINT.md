@@ -102,3 +102,16 @@ At the beginning of every session:
 6. Run authorize/verify/consume integration tests against the real Verigate instance.
 7. Execute a small tUSD8 payment on testnet; verify receipt, exact ERC-20 Transfer and PaymentExecuted logs, and reconciliation endpoint behavior.
 8. Expand gateway tests for DENY, malformed/invalid issuer signatures, consume=false, service timeouts, RPC ambiguity and process-crash recovery.
+
+
+## 2026-11-16 follow-up: Verigate issuer verification hardening
+- Verified current main HEAD before work: `711087c18d345aa6762c26b1356aa00d8acc56b6`.
+- Verified both latest-main workflows completed successfully on that exact HEAD: Gateway CI run [43856274430](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43856274430) and Solidity CI run [43856274274](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43856274274).
+- Opened PR #3: https://github.com/rudimentall1/aevum-agent-payment-gateway/pull/3
+- Branch: `test/issuer-auth-verification`; current branch implementation commit before this checkpoint: `fd0fa2c83c95b340e46a1d4bf1ef508dcb4a581e`.
+- Added unit tests for valid Verigate Ed25519 execution authorization, exact action binding, signature tampering and malformed envelopes.
+- Hardened `verify_execution_authorization` to reject non-object envelopes and payloads as controlled ValueErrors.
+- Solidity CI on PR head passed: [43861172516](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43861172516).
+- Gateway CI run [43861172540](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43861172540) was still installing dependencies at last observation; gateway tests and Docker build are not yet confirmed for this PR head.
+- PR is open and not merged. Main remains unchanged at `711087c18d345aa6762c26b1356aa00d8acc56b6`.
+- No Aevum deployment, live RPC verification, live Verigate integration or testnet payment was performed.
