@@ -1,0 +1,15 @@
+name: Solidity CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "feat/**"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: forge install foundry-rs/forge-std --no-commit
+      - run: forge build --sizes
+      - run: forge test -vvv
