@@ -11,11 +11,12 @@ Agents need to make payments without receiving unrestricted wallet authority. Ae
 1. Agent submits a payment request to the AevumPay gateway.
 2. Gateway constructs a canonical Verigate ActionIntent and requests executable authorization.
 3. Gateway verifies the authorization and consumes it once through Verigate.
-4. Agent/payer has approved the AevumPay router to spend the exact token amount.
-5. The router validates chain, token, recipient, amount, deadline and replay protection.
-6. Router calls ERC-20 transferFrom and emits a payment event.
+4. Payer signs an EIP-712 envelope binding payer, token, recipient, exact amount, request ID, deadline, chain and router.
+5. Payer approves the router to spend the required tUSD8 amount.
+6. The configured gateway executor relays the signed envelope. The router verifies the payer signature and independently enforces chain, token allowlist, recipient, amount, deadline and replay protection.
+7. Router calls ERC-20 transferFrom and emits a payment event.
 
-Verigate is an existing external service dependency, not new AevumPay contest implementation. The on-chain router does not claim to verify Verigate's Ed25519 signature. It independently enforces payment constraints.
+Verigate is an existing external service dependency, not new AevumPay contest implementation. The on-chain router does not claim to verify Verigate's Ed25519 signature. It independently verifies the payer's EIP-712 payment signature and enforces payment constraints.
 
 ## Network
 QDay Aevum Testnet, chain ID 44005 (0xabe5). Test token tUSD8: `0x456569838f1d43009A91ebA4263147Afd7233483`, 6 decimals. See [network configuration](docs/NETWORK_CONFIG.md).
