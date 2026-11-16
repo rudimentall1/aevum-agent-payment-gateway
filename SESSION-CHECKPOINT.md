@@ -10,7 +10,7 @@ Last updated: 2026-11-16 (implementation session)
 - Previous repository history is not present in this new repository.
 - Initial checkpoint commit: `65081b984629de6757dca287fd3a980721e523d7`.
 - Documentation restoration commits are present on `main` through `15f0b25b4798124b7953051c5afc3daa0dd0660f`.
-- Implementation branch: `feat/policy-router`; latest implementation commit before this checkpoint: `b0aa9d215e93278fa7c16aba4460bef5d65902d9`.
+- Implementation branch: `feat/policy-router`; latest implementation commit before this checkpoint: `99e6e75589a9675643ef08eb12f306d847cc4245`.
 
 ## Project
 **AevumPay: Policy-Controlled Payments for AI Agents**
@@ -64,7 +64,7 @@ AevumPay is a QDay Aevum testnet payment gateway. It uses an external Verigate a
 - Aevum RPC and tUSD8 contract: not live-verified from the previous sandbox (DNS resolution failed there; this does not prove global outage).
 - AevumPay implementation: initial EIP-712 policy router, Foundry test suite, deployment script and Solidity CI workflow committed on `feat/policy-router`.
 - AevumPay contract: not deployed.
-- Foundry tests are authored but have NOT been executed in this environment (Forge/Solc are not installed; outbound DNS/network unavailable). GitHub Actions run lookup returned no workflow runs at the time checked.
+- Foundry tests are authored (including executor, signature tampering, replay, expiry, unsupported token, wrong chain, zero amount, malformed signature and failed-token-transfer cases) but have NOT been executed in this environment (Forge/Solc are not installed; outbound DNS/network unavailable). The available commit-workflow lookup is limited to PR-triggered runs and returned none; push-triggered CI status remains unverified.
 - Verigate live integration: not configured or tested.
 - No testnet transaction has been sent by AevumPay.
 - Gensyn2 Desktop Commander connection was unavailable in the previous session. No secrets, API keys or private keys are recorded here.
