@@ -3,13 +3,17 @@ import base64
 import pytest
 from eth_account import Account
 from eth_account.messages import encode_typed_data
+from eth_abi import encode as abi_encode
+from web3 import Web3
 
+import gateway.app as gateway_app
 from gateway.app import (
     canonical_agent_payload,
     encode_router_calldata,
     parse_amount,
     payment_typed_data,
     verify_payer_signature,
+    verify_payment_events,
 )
 
 
@@ -56,3 +60,42 @@ def test_agent_payload_is_deterministic_utf8_json():
     two = canonical_agent_payload("identity", action)
     assert one == two
     assert base64.b64encode(one).decode("ascii")
+
+
+
+def test_payment_receipt_requires_matching_transfer_and_router_events(monkeypatch):
+    token = "0x0000000000000000000000000000000000000002"
+    router = "0x0000000000000000000000000000000000000003"
+    payer = "0x0000000000000000000000000000000000000001"
+    recipient = "0x0000000000000000000000000000000000000004"
+    request_id = "0x" + "22" * 32
+    amount = 1_250_000
+    monkeypatch.setattr(gateway_app, "TOKEN_ADDRESS", token)
+    monkeypatch.setattr(gateway_app, "ROUTER_ADDRESS", router)
+
+    def topic_address(address):
+        return bytes(12) + bytes.fromhex(address[2:])
+
+    logs = [
+        {
+            "address": token,
+            "topics": [
+                Web3.keccak(text="Transfer(address,address,uint256)"),
+                topic_address(payer),
+                topic_address(recipient),
+            ],
+            "data": abi_encode(["uint256"], [amount]),
+        },
+        {
+            "address": router,
+            "topics": [
+                Web3.keccak(text="PaymentExecuted(address,address,address,uint256,bytes32)"),
+                topic_address(payer),
+                topic_address(token),
+                topic_address(recipient),
+            ],
+            "data": abi_encode(["uint256", "bytes32"], [amount, bytes.fromhex(request_id[2:])]),
+        },
+    ]
+    assert verify_payment_events(logs, payer, recipient, amount, request_id)
+    assert not verify_payment_events(logs, payer, recipient, amount + 1, request_id)
