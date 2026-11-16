@@ -10,9 +10,9 @@ Last updated: 2026-11-16 (implementation session)
 - Previous repository history is not present in this new repository.
 - Initial checkpoint commit: `65081b984629de6757dca287fd3a980721e523d7`.
 - Documentation restoration commits are present on `main` through `15f0b25b4798124b7953051c5afc3daa0dd0660f`.
-- Implementation branch: `feat/policy-router-clean`, recreated from the current `main` to avoid conflicts caused by concurrent documentation updates.
-- Previous implementation branch: `feat/policy-router`; verified source snapshot commit: `0ee1cd439741cd6f90807fcb09a1aaa9f90b2148`.
-- PR #1 (`feat/policy-router`) is open but has merge conflicts because `main` advanced after it was opened. A clean replacement PR will be opened from `feat/policy-router-clean`.
+- Implementation merged to `main` via PR #2: https://github.com/rudimentall1/aevum-agent-payment-gateway/pull/2.
+- Merge commit: `3e0966ba329676631c579f2987b4a12639bdf4e4`.
+- Earlier conflicting draft PR #1 was closed after PR #2 was verified and merged.
 
 ## Project
 **AevumPay: Policy-Controlled Payments for AI Agents**
@@ -64,12 +64,12 @@ AevumPay is a QDay Aevum testnet payment gateway. It uses an external Verigate a
 - Official starter-kit and public QDay documentation: inspected in the prior work session.
 - Verigate source/routes/schemas/engine/execution router/identity/capability/signing code: inspected in the prior work session.
 - Aevum RPC and tUSD8 contract: not live-verified from the previous sandbox (DNS resolution failed there; this does not prove global outage).
-- AevumPay implementation: EIP-712 policy router, 15 Foundry tests, deployment script, threat model and Solidity CI workflow are present on `feat/policy-router-clean`.
-- On source branch commit `0ee1cd439741cd6f90807fcb09a1aaa9f90b2148`, GitHub Actions completed `forge build --sizes` successfully and all 15 Foundry tests passed (run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43840522387).
-- The clean branch was reconstructed on top of the latest `main`; its own CI must pass before merge.
+- AevumPay implementation is merged to `main`: EIP-712 policy router, 15 Foundry tests, deployment script, threat model and Solidity CI workflow.
+- GitHub Actions on the merged implementation branch completed `forge build --sizes` successfully and all 15 Foundry tests passed (run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43840838263).
+- PR #2 was mergeable/clean and merged by squash. No deployment or live transaction is claimed.
 - AevumPay contract: not deployed.
-- Foundry coverage includes executor restrictions, signature tampering, replay, expiry, unsupported token, wrong chain, zero amount, malformed signature, failed-transfer rollback, no-return ERC-20 compatibility and recipient restrictions. CI has executed and passed all 15 tests on the source snapshot; tests have not been run locally in this runtime.
-- Solidity CI runs `forge build --sizes` and `forge test -vvv` on pull requests and pushes to `main` and `feat/**`. Source snapshot CI is green; clean-branch CI is pending.
+- Foundry coverage includes executor restrictions, signature tampering, replay, expiry, unsupported token, wrong chain, zero amount, malformed signature, failed-transfer rollback, no-return ERC-20 compatibility and recipient restrictions. GitHub Actions executed and passed all 15 tests. Tests have not been run locally in this runtime.
+- Solidity CI runs `forge build --sizes` and `forge test -vvv` on pull requests and pushes to `main` and `feat/**`. The merged implementation branch CI is green; a post-merge main-branch run is expected.
 - Verigate live integration: not configured or tested.
 - No testnet transaction has been sent by AevumPay.
 - Gensyn2 Desktop Commander connection was unavailable in the previous session. No secrets, API keys or private keys are recorded here.
@@ -84,9 +84,11 @@ At the beginning of every session:
 6. Never claim work or external verification that did not occur.
 
 ## Next actions
-1. Wait for GitHub Actions on `feat/policy-router-clean`; fix any failures and rerun.
-2. Open replacement PR from `feat/policy-router-clean`; close conflicting PR #1 only after replacement PR is verified.
-3. Merge the clean PR only after its CI is green.
+1. Verify the post-merge `main` CI run.
+2. Confirm live Aevum RPC and tUSD8 metadata from a network-capable environment.
+3. Deploy the router on Aevum testnet and record deployment address and receipt.
+4. Confirm a real self-hosted Verigate endpoint, tenant/auth configuration, DB path and safe identity/capability bootstrap route.
+5. Implement the Gateway vertical slice: exact-decimal API, EIP-712 payer signature verification, Verigate authorize/verify/consume, executor transaction submission and receipt reconciliation.
 3. Confirm live Aevum RPC and tUSD8 metadata from a network-capable environment.
 4. Deploy the router on Aevum testnet, record deployment address and receipt.
 5. Confirm a real self-hosted Verigate endpoint, tenant/auth configuration, DB path and safe identity/capability bootstrap route before integration.
