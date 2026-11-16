@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
+import "forge-std/console2.sol";
 import "../src/AevumPayPolicyRouter.sol";
 
 contract DeployAevumPay is Script {
