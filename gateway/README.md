@@ -56,6 +56,6 @@ The payer must have approved the router to spend the required tUSD8 amount befor
 - Verigate issuer signatures are verified locally against the pinned Ed25519 public key.
 - No EVM transaction is submitted unless Verigate returns ALLOW, the execution authorization verifies, and consume returns `execute=true`.
 - Duplicate request IDs are rejected using a local SQLite ledger.
-- A timeout after Verigate consumption is an ambiguous state. Never blindly retry; inspect the ledger and chain first.
+- A timeout after Verigate consumption is an ambiguous state. The gateway preserves a transaction hash when one can be derived or broadcast. Never blindly retry; inspect the ledger and chain first.
 - A consumed Verigate authorization is single-use. If broadcast fails, a fresh authorization/request ID is required after reconciliation.
 - The gateway currently assumes the Aevum testnet router and tUSD8 configuration. It is not production-ready until live RPC, Verigate, deployment and end-to-end tests pass.
