@@ -3,6 +3,7 @@ import base64
 import pytest
 from eth_account import Account
 from eth_account.messages import encode_typed_data
+from cryptography.fernet import Fernet
 from eth_abi import encode as abi_encode
 from web3 import Web3
 
@@ -105,7 +106,8 @@ def test_payment_receipt_requires_matching_transfer_and_router_events(monkeypatc
 
 
 def test_signed_transaction_is_durable_and_hidden_from_public_record(tmp_path):
-    store = PaymentStore(str(tmp_path / "payments.sqlite"))
+    encryption_key = Fernet.generate_key()
+    store = PaymentStore(str(tmp_path / "payments.sqlite"), encryption_key=encryption_key)
     req = PrepareRequest(
         payer="0x0000000000000000000000000000000000000001",
         recipient="0x0000000000000000000000000000000000000002",
@@ -127,9 +129,10 @@ def test_signed_transaction_is_durable_and_hidden_from_public_record(tmp_path):
     record = store.get(req.request_id)
     assert record["status"] == "SIGNED_AWAITING_CONSUME"
     assert record["tx_hash"] == tx_hash
-    assert record["raw_transaction"] == raw_tx
+    assert record["raw_transaction"] != raw_tx
+    assert Fernet(encryption_key).decrypt(record["raw_transaction"]) == raw_tx
 
     store.update(req.request_id, "AUTHORIZED_CONSUMED")
-    assert store.get(req.request_id)["raw_transaction"] == raw_tx
+    assert Fernet(encryption_key).decrypt(store.get(req.request_id)["raw_transaction"]) == raw_tx
     store.clear_signed_transaction(req.request_id)
     assert store.get(req.request_id)["raw_transaction"] is None
