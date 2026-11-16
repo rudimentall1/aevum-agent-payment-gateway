@@ -1,6 +1,6 @@
 # AevumPay Session Checkpoint
 
-Last updated: 2026-11-16 (implementation session)
+Last updated: 2026-11-16 (router implementation merged)
 
 ## Repository state
 - Repository: https://github.com/rudimentall1/aevum-agent-payment-gateway
@@ -89,9 +89,4 @@ At the beginning of every session:
 3. Deploy the router on Aevum testnet and record deployment address and receipt.
 4. Confirm a real self-hosted Verigate endpoint, tenant/auth configuration, DB path and safe identity/capability bootstrap route.
 5. Implement the Gateway vertical slice: exact-decimal API, EIP-712 payer signature verification, Verigate authorize/verify/consume, executor transaction submission and receipt reconciliation.
-3. Confirm live Aevum RPC and tUSD8 metadata from a network-capable environment.
-4. Deploy the router on Aevum testnet, record deployment address and receipt.
-5. Confirm a real self-hosted Verigate endpoint, tenant/auth configuration, DB path and safe identity/capability bootstrap route before integration.
-6. Implement gateway EIP-712 signing, Verigate authorize/verify/consume, and transaction reconciliation.
-7. Run end-to-end testnet payment and capture receipt, Transfer and PaymentExecuted evidence.
-8. Add remaining failure tests for token transfer failure, wrong chain, zero values, service outage and RPC timeout reconciliation.
+6. Run an end-to-end testnet payment and capture receipt, ERC-20 Transfer and PaymentExecuted evidence.
