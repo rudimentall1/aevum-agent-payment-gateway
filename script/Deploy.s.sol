@@ -12,6 +12,8 @@ contract DeployAevumPay is Script {
         address token = vm.envAddress("AEVUMPAY_TOKEN");
         uint256 chainId = vm.envOr("AEVUMPAY_CHAIN_ID", uint256(44005));
 
+        require(owner == vm.addr(deployerKey), "deployer must be owner");
+
         vm.startBroadcast(deployerKey);
         router = new AevumPayPolicyRouter(owner, executor, chainId);
         router.setTokenSupport(token, true);
