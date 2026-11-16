@@ -410,7 +410,48 @@ def prepare_payment(req: PaymentFields) -> tuple[dict[str, Any], dict[str, Any],
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any]) -> dict[str, Any]:
+def preflight_transaction(req: ExecuteRequest, amount_units: int, request_id: str) -> None:
+    # Run before Verigate consume so predictable chain/token/allowance failures
+    # do not burn a one-time execution authorization.
+    try:
+        w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={"timeout": HTTP_TIMEOUT}))
+        if not w3.is_connected() or w3.eth.chain_id != CHAIN_ID:
+            raise ValueError("Aevum RPC unavailable or wrong chain")
+        account = Account.from_key(EXECUTOR_PRIVATE_KEY)
+        router = w3.eth.contract(address=Web3.to_checksum_address(ROUTER_ADDRESS), abi=ROUTER_ABI)
+        token = w3.eth.contract(address=Web3.to_checksum_address(TOKEN_ADDRESS), abi=ERC20_ABI)
+        if router.functions.executor().call().lower() != account.address.lower():
+            raise ValueError("configured signer is not the router executor")
+        if router.functions.paused().call():
+            raise ValueError("payment router is paused")
+        if not router.functions.supportedTokens(Web3.to_checksum_address(TOKEN_ADDRESS)).call():
+            raise ValueError("tUSD8 is not enabled on the router")
+        if token.functions.decimals().call() != TOKEN_DECIMALS:
+            raise ValueError("configured token decimals do not match on-chain decimals")
+        payer = Web3.to_checksum_address(req.payer)
+        if token.functions.balanceOf(payer).call() < amount_units:
+            raise ValueError("payer token balance is insufficient")
+        if token.functions.allowance(payer, Web3.to_checksum_address(ROUTER_ADDRESS)).call() < amount_units:
+            raise ValueError("payer allowance is insufficient")
+        data = encode_router_calldata(
+            payer, Web3.to_checksum_address(TOKEN_ADDRESS), Web3.to_checksum_address(req.recipient),
+            amount_units, request_id, req.deadline, req.payer_signature,
+        )
+        w3.eth.estimate_gas({
+            "from": account.address,
+            "to": Web3.to_checksum_address(ROUTER_ADDRESS),
+            "value": 0,
+            "data": data,
+            "chainId": CHAIN_ID,
+        })
+    except Exception as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"on-chain preflight failed before Verigate consume: {type(exc).__name__}",
+        ) from exc
+
+
+def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any], preflight=None) -> dict[str, Any]:
     try:
         with httpx.Client(timeout=HTTP_TIMEOUT) as client:
             response = client.post(
@@ -455,6 +496,8 @@ def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any]) -> dict[s
             ):
                 raise HTTPException(status_code=403, detail="Verigate authority identity binding mismatch")
             verify_execution_authorization(authorization, load_issuer_key(), action)
+            if preflight is not None:
+                preflight()
             consume = client.post(
                 f"{VERIGATE_URL}/v1/execution/consume",
                 headers={
@@ -630,7 +673,10 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
     store.reserve(req, amount_units)
     store.update(request_id, "AUTHORIZING")
     try:
-        authorization = authorize_and_consume(req, action)
+        authorization = authorize_and_consume(
+            req, action,
+            preflight=lambda: preflight_transaction(req, amount_units, request_id),
+        )
         store.update(request_id, "AUTHORIZED_CONSUMED")
         result = submit_transaction(
             req, amount_units, request_id,
