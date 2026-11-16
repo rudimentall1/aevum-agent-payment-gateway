@@ -1,9 +1,12 @@
 import base64
+import hashlib
+import json
 
 import pytest
 from eth_account import Account
 from eth_account.messages import encode_typed_data
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from eth_abi import encode as abi_encode
 from web3 import Web3
 
@@ -17,6 +20,7 @@ from gateway.app import (
     PrepareRequest,
     verify_payer_signature,
     verify_payment_events,
+    verify_execution_authorization,
 )
 
 
@@ -137,3 +141,61 @@ def test_signed_transaction_is_durable_and_hidden_from_public_record(tmp_path):
     assert Fernet(encryption_key).decrypt(store.get(req.request_id)["raw_transaction"]) == raw_tx
     store.clear_signed_transaction(req.request_id)
     assert store.get(req.request_id)["raw_transaction"] is None
+
+
+
+def _signed_execution_authorization(action):
+    private_key = Ed25519PrivateKey.generate()
+    action_hash = hashlib.sha256(
+        json.dumps(action, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    payload = {
+        "identity_id": "identity-1",
+        "capability_id": "capability-1",
+        "agent_id": "agent-1",
+        "intent_id": "intent-1",
+        "action": action,
+        "action_sha256": action_hash,
+        "authorization_id": "authorization-1",
+    }
+    signature = private_key.sign(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    )
+    authorization = {
+        "algorithm": "Ed25519",
+        "payload": payload,
+        "signature": base64.b64encode(signature).decode("ascii"),
+    }
+    return authorization, private_key.public_key()
+
+
+def test_verigate_execution_authorization_verifies_exact_action_and_signature():
+    action = {
+        "action_type": "payment",
+        "target": "0x0000000000000000000000000000000000000002",
+        "amount_exact": "1.250000",
+        "metadata": {"evm_transaction": {"chain_id": 44005, "value_wei": 0}},
+    }
+    authorization, public_key = _signed_execution_authorization(action)
+    verify_execution_authorization(authorization, public_key, action)
+
+
+def test_verigate_execution_authorization_rejects_changed_action_and_signature():
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    authorization, public_key = _signed_execution_authorization(action)
+
+    changed_action = {**action, "amount_exact": "9.000000"}
+    with pytest.raises(ValueError):
+        verify_execution_authorization(authorization, public_key, changed_action)
+
+    authorization["signature"] = base64.b64encode(bytes(64)).decode("ascii")
+    with pytest.raises(ValueError):
+        verify_execution_authorization(authorization, public_key, action)
+
+
+def test_verigate_execution_authorization_rejects_malformed_envelopes():
+    action = {"action_type": "payment"}
+    authorization, public_key = _signed_execution_authorization(action)
+    for malformed in (None, [], {"algorithm": "Ed25519", "payload": []}):
+        with pytest.raises(ValueError):
+            verify_execution_authorization(malformed, public_key, action)
