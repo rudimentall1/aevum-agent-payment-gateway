@@ -63,7 +63,7 @@ The payer must have approved the router to spend the required tUSD8 amount befor
 
 ## Docker Compose
 
-The repository includes a container image and a Compose service. The container runs as an unprivileged user, keeps its SQLite ledger in a named volume, and binds the HTTP port to localhost.
+The repository includes a container image and a Compose service. The container runs as an unprivileged user, keeps its SQLite ledger in a named volume, and binds the HTTP port to localhost. Signed raw transactions are encrypted in SQLite with Fernet using the separate `AEVUMPAY_TX_ENCRYPTION_KEY`; generate a key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and keep it outside source control. A database-only leak must not expose immediately broadcastable signed transactions.
 
 ```bash
 cp .env.example .env
