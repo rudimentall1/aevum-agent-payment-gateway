@@ -1,6 +1,6 @@
 # AevumPay Session Checkpoint
 
-Last updated: 2026-11-16 (initial gateway slice and CI verified)
+Last updated: 2026-11-16 (gateway container build and CI verified)
 
 ## Repository state
 - Repository: https://github.com/rudimentall1/aevum-agent-payment-gateway
@@ -72,7 +72,9 @@ AevumPay is a QDay Aevum testnet payment gateway. It uses an external Verigate a
 - Solidity CI runs `forge build --sizes` and `forge test -vvv` on pull requests and pushes to `main` and `feat/**`. Latest main run passed: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43841842492.
 - Initial FastAPI gateway is implemented under `gateway/`: `/v1/payments/typed-data`, `/v1/payments/prepare`, `/v1/payments/execute`, `/v1/payments/{request_id}` and `/health`. It derives calldata, enforces decimal-string amounts, verifies payer EIP-712 signatures and pinned Verigate Ed25519 execution authorizations, calls Verigate authorize/consume, submits the transaction and records payment status in SQLite.
 - Gateway verifies the exact ERC-20 Transfer and PaymentExecuted events before marking a payment CONFIRMED. It preserves transaction hashes for pending/ambiguous receipt states and rejects duplicate request IDs.
-- Gateway CI passed 5 unit tests on the latest main commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43841842449.
+- Gateway CI passed 5 unit tests and built the Docker image on the latest implementation commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43842077981.
+- Solidity CI also passed on that commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43842078034.
+- A non-root Dockerfile, Compose service, `.env.example` and runtime setup guide are present. Docker image build is CI-verified; Compose has not been started with live credentials.
 - Gateway is not yet live-integrated: no Verigate URL, API key, tenant, issuer public key, router address or executor key has been configured. No Aevum testnet deployment or payment has occurred.
 - Verigate live integration: not configured or tested.
 - No testnet transaction has been sent by AevumPay.
@@ -91,6 +93,7 @@ At the beginning of every session:
 1. Verify Aevum RPC `eth_chainId`, `eth_blockNumber`, tUSD8 bytecode and decimals from a network-capable host; current execution environment cannot resolve the RPC hostname.
 2. Confirm the actual self-hosted Verigate endpoint, API key, tenant, issuer public key and exact tenant DB path; provision the identity and payment capability against that running instance.
 3. Deploy the router to Aevum testnet using privately configured deployer values; record contract address and deployment receipt.
-4. Configure the gateway runtime and run authorize/verify/consume integration tests against the real Verigate instance.
-5. Execute a small tUSD8 payment on testnet; verify receipt, exact ERC-20 Transfer and PaymentExecuted logs, and gateway status reconciliation.
-6. Expand gateway tests for DENY, malformed/invalid issuer signatures, consume=false, service timeouts, RPC ambiguity and process-crash recovery.
+4. Populate `.env` and the pinned issuer public-key file privately; launch the Compose service only after the router address and Verigate endpoint are verified.
+5. Run authorize/verify/consume integration tests against the real Verigate instance.
+6. Execute a small tUSD8 payment on testnet; verify receipt, exact ERC-20 Transfer and PaymentExecuted logs, and gateway status reconciliation.
+7. Expand gateway tests for DENY, malformed/invalid issuer signatures, consume=false, service timeouts, RPC ambiguity and process-crash recovery.
