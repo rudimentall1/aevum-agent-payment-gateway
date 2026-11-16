@@ -1,6 +1,6 @@
 # AevumPay Session Checkpoint
 
-Last updated: 2026-11-16
+Last updated: 2026-11-16 (implementation session)
 
 ## Repository state
 - Repository: https://github.com/rudimentall1/aevum-agent-payment-gateway
@@ -8,7 +8,9 @@ Last updated: 2026-11-16
 - Current default branch: main.
 - Initial state verified through GitHub: repository exists, public, empty (size 0).
 - Previous repository history is not present in this new repository.
-- This checkpoint is the first commit in the recreated repository.
+- Initial checkpoint commit: `65081b984629de6757dca287fd3a980721e523d7`.
+- Documentation restoration commits are present on `main` through `15f0b25b4798124b7953051c5afc3daa0dd0660f`.
+- Implementation branch: `feat/policy-router`; latest implementation commit before this checkpoint: `b0aa9d215e93278fa7c16aba4460bef5d65902d9`.
 
 ## Project
 **AevumPay: Policy-Controlled Payments for AI Agents**
@@ -60,8 +62,9 @@ AevumPay is a QDay Aevum testnet payment gateway. It uses an external Verigate a
 - Official starter-kit and public QDay documentation: inspected in the prior work session.
 - Verigate source/routes/schemas/engine/execution router/identity/capability/signing code: inspected in the prior work session.
 - Aevum RPC and tUSD8 contract: not live-verified from the previous sandbox (DNS resolution failed there; this does not prove global outage).
-- AevumPay implementation: not yet written.
+- AevumPay implementation: initial EIP-712 policy router, Foundry test suite, deployment script and Solidity CI workflow committed on `feat/policy-router`.
 - AevumPay contract: not deployed.
+- Foundry tests are authored but have NOT been executed in this environment (Forge/Solc are not installed; outbound DNS/network unavailable). GitHub Actions run lookup returned no workflow runs at the time checked.
 - Verigate live integration: not configured or tested.
 - No testnet transaction has been sent by AevumPay.
 - Gensyn2 Desktop Commander connection was unavailable in the previous session. No secrets, API keys or private keys are recorded here.
@@ -76,10 +79,11 @@ At the beginning of every session:
 6. Never claim work or external verification that did not occur.
 
 ## Next actions
-1. Restore the project documentation into this recreated repository.
-2. Establish implementation branch and add the first executable vertical slice.
-3. Implement and test the policy router with fail-closed behavior.
-4. Confirm live Aevum RPC and tUSD8 metadata from a network-capable environment.
+1. Run Foundry formatter and unit tests in CI; fix any compiler/test failures.
+2. Review and merge `feat/policy-router` into `main` after CI is green.
+3. Confirm live Aevum RPC and tUSD8 metadata from a network-capable environment.
+4. Deploy the router on Aevum testnet, record deployment address and receipt.
 5. Confirm a real self-hosted Verigate endpoint, tenant/auth configuration, DB path and safe identity/capability bootstrap route before integration.
-6. Build the EOA -> Gateway -> Verigate authorize/consume -> Aevum policy router -> tUSD8 Transfer flow.
-7. Add tests for ALLOW/BLOCK, tampering, replay, expiry, wrong chain/recipient/amount, service outage and RPC timeout reconciliation.
+6. Implement gateway EIP-712 signing, Verigate authorize/verify/consume, and transaction reconciliation.
+7. Run end-to-end testnet payment and capture receipt, Transfer and PaymentExecuted evidence.
+8. Add remaining failure tests for token transfer failure, wrong chain, zero values, service outage and RPC timeout reconciliation.
