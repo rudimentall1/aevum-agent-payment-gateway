@@ -437,13 +437,15 @@ def preflight_transaction(req: ExecuteRequest, amount_units: int, request_id: st
             payer, Web3.to_checksum_address(TOKEN_ADDRESS), Web3.to_checksum_address(req.recipient),
             amount_units, request_id, req.deadline, req.payer_signature,
         )
-        w3.eth.estimate_gas({
+        gas_estimate = w3.eth.estimate_gas({
             "from": account.address,
             "to": Web3.to_checksum_address(ROUTER_ADDRESS),
             "value": 0,
             "data": data,
             "chainId": CHAIN_ID,
         })
+        if w3.eth.get_balance(account.address) < gas_estimate * w3.eth.gas_price:
+            raise ValueError("executor native gas balance is insufficient")
     except Exception as exc:
         raise HTTPException(
             status_code=409,
@@ -513,7 +515,7 @@ def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any], preflight
             return authorization
     except HTTPException:
         raise
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:
         raise HTTPException(status_code=502, detail="Verigate authorization/consume failed closed") from exc
 
 
