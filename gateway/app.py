@@ -64,18 +64,18 @@ REQUEST_ID_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
 class PaymentFields(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
-    payer: str
-    recipient: str
-    amount: str
-    request_id: str
-    deadline: int = Field(gt=0)
-    payer_signature: str
-    agent_id: str
-    identity_id: str
-    capability_id: str
-    intent_id: str
-    timestamp: float
-    purpose: str = "agent payment"
+    payer: str = Field(min_length=42, max_length=42)
+    recipient: str = Field(min_length=42, max_length=42)
+    amount: str = Field(min_length=1, max_length=80)
+    request_id: str = Field(min_length=66, max_length=66)
+    deadline: int = Field(gt=0, strict=True)
+    payer_signature: str = Field(min_length=132, max_length=132)
+    agent_id: str = Field(min_length=1, max_length=200)
+    identity_id: str = Field(min_length=1, max_length=200)
+    capability_id: str = Field(min_length=1, max_length=200)
+    intent_id: str = Field(min_length=1, max_length=200)
+    timestamp: float = Field(gt=0, strict=True)
+    purpose: str = Field(default="agent payment", max_length=256)
 
 
 class PrepareRequest(PaymentFields):
@@ -254,6 +254,11 @@ def verify_execution_authorization(
         payload = authorization["payload"]
         if payload.get("action") != expected_action:
             raise ValueError("Verigate authorized a different action or transaction")
+        expected_action_sha256 = hashlib.sha256(json.dumps(
+            expected_action, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")).hexdigest()
+        if payload.get("action_sha256") != expected_action_sha256:
+            raise ValueError("Verigate action fingerprint does not match payment envelope")
         signature = base64.b64decode(authorization["signature"], validate=True)
         public_key.verify(signature, json.dumps(
             payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
@@ -406,6 +411,14 @@ def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any]) -> dict[s
             authorization = body.get("execution_authorization")
             if decision.get("decision") != "ALLOW" or not isinstance(authorization, dict):
                 raise HTTPException(status_code=403, detail="Verigate did not issue executable ALLOW authority")
+            auth_payload = authorization.get("payload") or {}
+            if (
+                auth_payload.get("identity_id") != req.identity_id
+                or auth_payload.get("capability_id") != req.capability_id
+                or auth_payload.get("agent_id") != req.agent_id
+                or auth_payload.get("intent_id") != req.intent_id
+            ):
+                raise HTTPException(status_code=403, detail="Verigate authority identity binding mismatch")
             verify_execution_authorization(authorization, load_issuer_key(), action)
             consume = client.post(
                 f"{VERIGATE_URL}/v1/execution/consume",
@@ -449,7 +462,7 @@ def submit_transaction(req: ExecuteRequest, amount_units: int, request_id: str) 
         payer = Web3.to_checksum_address(req.payer)
         if token.functions.balanceOf(payer).call() < amount_units:
             raise RuntimeError("payer token balance is insufficient")
-        if token.functions.allowance(payer, ROUTER_ADDRESS).call() < amount_units:
+        if token.functions.allowance(payer, Web3.to_checksum_address(ROUTER_ADDRESS)).call() < amount_units:
             raise RuntimeError("payer allowance is insufficient")
 
         data = encode_router_calldata(
@@ -469,7 +482,7 @@ def submit_transaction(req: ExecuteRequest, amount_units: int, request_id: str) 
         tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.2)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=HTTP_TIMEOUT)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=max(60, HTTP_TIMEOUT))
         if receipt.status != 1:
             raise RuntimeError(f"transaction reverted: {tx_hash.hex()}")
         return {
