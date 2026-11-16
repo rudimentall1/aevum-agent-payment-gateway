@@ -12,6 +12,8 @@ from gateway.app import (
     encode_router_calldata,
     parse_amount,
     payment_typed_data,
+    PaymentStore,
+    PrepareRequest,
     verify_payer_signature,
     verify_payment_events,
 )
@@ -99,3 +101,35 @@ def test_payment_receipt_requires_matching_transfer_and_router_events(monkeypatc
     ]
     assert verify_payment_events(logs, payer, recipient, amount, request_id)
     assert not verify_payment_events(logs, payer, recipient, amount + 1, request_id)
+
+
+
+def test_signed_transaction_is_durable_and_hidden_from_public_record(tmp_path):
+    store = PaymentStore(str(tmp_path / "payments.sqlite"))
+    req = PrepareRequest(
+        payer="0x0000000000000000000000000000000000000001",
+        recipient="0x0000000000000000000000000000000000000002",
+        amount="1.25",
+        request_id="0x" + "33" * 32,
+        deadline=1_800_000_000,
+        payer_signature="0x" + "11" * 65,
+        agent_id="agent",
+        identity_id="identity",
+        capability_id="capability",
+        intent_id="intent",
+        timestamp=1_700_000_000.0,
+    )
+    store.reserve(req, 1_250_000)
+    raw_tx = bytes.fromhex("02" + "ab" * 40)
+    tx_hash = "0x" + "44" * 32
+    store.set_signed_transaction(req.request_id, tx_hash, raw_tx)
+
+    record = store.get(req.request_id)
+    assert record["status"] == "SIGNED_AWAITING_CONSUME"
+    assert record["tx_hash"] == tx_hash
+    assert record["raw_transaction"] == raw_tx
+
+    store.update(req.request_id, "AUTHORIZED_CONSUMED")
+    assert store.get(req.request_id)["raw_transaction"] == raw_tx
+    store.clear_signed_transaction(req.request_id)
+    assert store.get(req.request_id)["raw_transaction"] is None
