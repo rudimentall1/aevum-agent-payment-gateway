@@ -290,11 +290,15 @@ class PaymentStore:
                     amount_base_units TEXT NOT NULL,
                     status TEXT NOT NULL,
                     tx_hash TEXT,
+                    raw_transaction BLOB,
                     detail TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(payments)")}
+            if "raw_transaction" not in columns:
+                db.execute("ALTER TABLE payments ADD COLUMN raw_transaction BLOB")
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -306,7 +310,10 @@ class PaymentStore:
         try:
             with self._connect() as db:
                 db.execute(
-                    "INSERT INTO payments VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+                    """INSERT INTO payments
+                       (request_id, intent_id, payer, recipient, amount_base_units,
+                        status, tx_hash, raw_transaction, detail, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)""",
                     (req.request_id.lower(), req.intent_id, req.payer.lower(), req.recipient.lower(),
                      str(amount_units), "AUTHORIZING", now, now),
                 )
@@ -318,6 +325,21 @@ class PaymentStore:
             db.execute(
                 "UPDATE payments SET status=?, tx_hash=COALESCE(?, tx_hash), detail=?, updated_at=? WHERE request_id=?",
                 (status, tx_hash, detail, int(time.time()), request_id.lower()),
+            )
+
+    def set_signed_transaction(self, request_id: str, tx_hash: str, raw_transaction: bytes) -> None:
+        with self._connect() as db:
+            db.execute(
+                """UPDATE payments SET status='SIGNED_AWAITING_CONSUME',
+                   tx_hash=?, raw_transaction=?, updated_at=? WHERE request_id=?""",
+                (tx_hash, raw_transaction, int(time.time()), request_id.lower()),
+            )
+
+    def clear_signed_transaction(self, request_id: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE payments SET raw_transaction=NULL, updated_at=? WHERE request_id=?",
+                (int(time.time()), request_id.lower()),
             )
 
     def get(self, request_id: str) -> dict[str, Any] | None:
@@ -410,48 +432,64 @@ def prepare_payment(req: PaymentFields) -> tuple[dict[str, Any], dict[str, Any],
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def preflight_transaction(req: ExecuteRequest, amount_units: int, request_id: str) -> None:
-    # Run before Verigate consume so predictable chain/token/allowance failures
-    # do not burn a one-time execution authorization.
+def preflight_transaction(req: ExecuteRequest, amount_units: int, request_id: str) -> dict[str, Any]:
+    # Validate and sign the exact transaction before consuming one-time Verigate
+    # authority. The signed bytes and deterministic hash are persisted before
+    # consume, so a process restart does not lose the only broadcastable tx.
     try:
         w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={"timeout": HTTP_TIMEOUT}))
         if not w3.is_connected() or w3.eth.chain_id != CHAIN_ID:
             raise ValueError("Aevum RPC unavailable or wrong chain")
         account = Account.from_key(EXECUTOR_PRIVATE_KEY)
-        router = w3.eth.contract(address=Web3.to_checksum_address(ROUTER_ADDRESS), abi=ROUTER_ABI)
-        token = w3.eth.contract(address=Web3.to_checksum_address(TOKEN_ADDRESS), abi=ERC20_ABI)
+        router_address = Web3.to_checksum_address(ROUTER_ADDRESS)
+        token_address = Web3.to_checksum_address(TOKEN_ADDRESS)
+        router = w3.eth.contract(address=router_address, abi=ROUTER_ABI)
+        token = w3.eth.contract(address=token_address, abi=ERC20_ABI)
         if router.functions.executor().call().lower() != account.address.lower():
             raise ValueError("configured signer is not the router executor")
         if router.functions.paused().call():
             raise ValueError("payment router is paused")
-        if not router.functions.supportedTokens(Web3.to_checksum_address(TOKEN_ADDRESS)).call():
+        if not router.functions.supportedTokens(token_address).call():
             raise ValueError("tUSD8 is not enabled on the router")
         if token.functions.decimals().call() != TOKEN_DECIMALS:
             raise ValueError("configured token decimals do not match on-chain decimals")
         payer = Web3.to_checksum_address(req.payer)
         if token.functions.balanceOf(payer).call() < amount_units:
             raise ValueError("payer token balance is insufficient")
-        if token.functions.allowance(payer, Web3.to_checksum_address(ROUTER_ADDRESS)).call() < amount_units:
+        if token.functions.allowance(payer, router_address).call() < amount_units:
             raise ValueError("payer allowance is insufficient")
         data = encode_router_calldata(
-            payer, Web3.to_checksum_address(TOKEN_ADDRESS), Web3.to_checksum_address(req.recipient),
+            payer, token_address, Web3.to_checksum_address(req.recipient),
             amount_units, request_id, req.deadline, req.payer_signature,
         )
-        gas_estimate = w3.eth.estimate_gas({
+        nonce = w3.eth.get_transaction_count(account.address, "pending")
+        tx = {
             "from": account.address,
-            "to": Web3.to_checksum_address(ROUTER_ADDRESS),
+            "to": router_address,
             "value": 0,
             "data": data,
+            "nonce": nonce,
             "chainId": CHAIN_ID,
-        })
-        required_gas_balance = int(gas_estimate * 1.2) * w3.eth.gas_price
-        if w3.eth.get_balance(account.address) < required_gas_balance:
+            "gasPrice": w3.eth.gas_price,
+        }
+        gas_estimate = w3.eth.estimate_gas(tx)
+        tx["gas"] = int(gas_estimate * 1.2)
+        if w3.eth.get_balance(account.address) < tx["gas"] * tx["gasPrice"]:
             raise ValueError("executor native gas balance is insufficient")
+        signed = account.sign_transaction(tx)
+        raw_transaction = bytes(signed.raw_transaction)
+        tx_hash = Web3.keccak(raw_transaction).hex()
+        return {
+            "web3": w3,
+            "raw_transaction": raw_transaction,
+            "transaction_hash": tx_hash,
+        }
     except Exception as exc:
         raise HTTPException(
             status_code=409,
-            detail=f"on-chain preflight failed before Verigate consume: {type(exc).__name__}",
+            detail=f"on-chain preflight/signing failed before Verigate consume: {type(exc).__name__}",
         ) from exc
+
 
 
 def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any], preflight=None) -> dict[str, Any]:
@@ -522,107 +560,59 @@ def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any], preflight
 
 def submit_transaction(
     req: ExecuteRequest, amount_units: int, request_id: str,
-    on_broadcast=None,
+    prepared: dict[str, Any], on_broadcast=None,
 ) -> dict[str, Any]:
-    if not Web3.is_address(ROUTER_ADDRESS):
-        raise HTTPException(status_code=503, detail="router address is not configured")
+    # Broadcast the exact bytes that were signed and persisted before Verigate
+    # consume. Do not rebuild the transaction or fetch a new nonce/gas price.
+    w3 = prepared["web3"]
+    raw_transaction = prepared["raw_transaction"]
+    expected_hash = prepared["transaction_hash"]
+    if on_broadcast:
+        on_broadcast(expected_hash, "SUBMITTING")
     try:
-        w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={"timeout": HTTP_TIMEOUT}))
-        if not w3.is_connected():
-            raise RuntimeError("Aevum RPC unavailable")
-        if w3.eth.chain_id != CHAIN_ID:
-            raise RuntimeError(f"wrong chain ID: {w3.eth.chain_id}")
-        account = Account.from_key(EXECUTOR_PRIVATE_KEY)
-        router = w3.eth.contract(address=Web3.to_checksum_address(ROUTER_ADDRESS), abi=ROUTER_ABI)
-        token = w3.eth.contract(address=Web3.to_checksum_address(TOKEN_ADDRESS), abi=ERC20_ABI)
-        if router.functions.executor().call().lower() != account.address.lower():
-            raise RuntimeError("configured signer is not the router executor")
-        if router.functions.paused().call():
-            raise RuntimeError("payment router is paused")
-        if not router.functions.supportedTokens(Web3.to_checksum_address(TOKEN_ADDRESS)).call():
-            raise RuntimeError("tUSD8 is not enabled on the router")
-        if token.functions.decimals().call() != TOKEN_DECIMALS:
-            raise RuntimeError("configured token decimals do not match on-chain decimals")
-        payer = Web3.to_checksum_address(req.payer)
-        if token.functions.balanceOf(payer).call() < amount_units:
-            raise RuntimeError("payer token balance is insufficient")
-        if token.functions.allowance(payer, Web3.to_checksum_address(ROUTER_ADDRESS)).call() < amount_units:
-            raise RuntimeError("payer allowance is insufficient")
-
-        data = encode_router_calldata(
-            payer, Web3.to_checksum_address(TOKEN_ADDRESS), Web3.to_checksum_address(req.recipient),
-            amount_units, request_id, req.deadline, req.payer_signature,
-        )
-        nonce = w3.eth.get_transaction_count(account.address, "pending")
-        tx = {
-            "from": account.address,
-            "to": Web3.to_checksum_address(ROUTER_ADDRESS),
-            "value": 0,
-            "data": data,
-            "nonce": nonce,
-            "chainId": CHAIN_ID,
-            "gasPrice": w3.eth.gas_price,
+        tx_hash = w3.eth.send_raw_transaction(raw_transaction)
+    except Exception as exc:
+        if on_broadcast:
+            on_broadcast(expected_hash, "UNKNOWN_REQUIRES_RECONCILIATION")
+        return {
+            "transaction_hash": expected_hash,
+            "status": "UNKNOWN_REQUIRES_RECONCILIATION",
+            "detail": type(exc).__name__,
         }
-        tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.2)
-        signed = account.sign_transaction(tx)
-        expected_hash = Web3.keccak(signed.raw_transaction).hex()
-        if on_broadcast:
-            # Persist the locally-derived transaction hash before handing the
-            # raw transaction to the RPC. A process crash can then be reconciled.
-            on_broadcast(expected_hash, "SUBMITTING")
-        try:
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        except Exception as exc:
-            # RPC may have accepted the raw transaction before the response was lost.
-            # Keep the locally derived hash and require reconciliation; never blind-retry.
-            if on_broadcast:
-                on_broadcast(expected_hash, "UNKNOWN_REQUIRES_RECONCILIATION")
-            return {
-                "transaction_hash": expected_hash,
-                "status": "UNKNOWN_REQUIRES_RECONCILIATION",
-                "detail": type(exc).__name__,
-            }
 
-        tx_hash_hex = tx_hash.hex()
-        if on_broadcast:
-            on_broadcast(tx_hash_hex, "PENDING")
-        try:
-            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=max(60, HTTP_TIMEOUT))
-        except Exception as exc:
-            return {
-                "transaction_hash": tx_hash_hex,
-                "status": "PENDING",
-                "detail": type(exc).__name__,
-            }
-        if receipt.status != 1:
-            return {
-                "transaction_hash": tx_hash_hex,
-                "block_number": receipt.blockNumber,
-                "gas_used": receipt.gasUsed,
-                "status": "REVERTED",
-            }
-        if not verify_payment_events(receipt.logs, req.payer, req.recipient, amount_units, request_id):
-            return {
-                "transaction_hash": tx_hash_hex,
-                "block_number": receipt.blockNumber,
-                "gas_used": receipt.gasUsed,
-                "status": "UNKNOWN_REQUIRES_RECONCILIATION",
-                "detail": "expected ERC-20 Transfer and PaymentExecuted logs were not both found",
-            }
+    tx_hash_hex = tx_hash.hex()
+    if on_broadcast:
+        on_broadcast(tx_hash_hex, "PENDING")
+    try:
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=max(60, HTTP_TIMEOUT))
+    except Exception as exc:
+        return {
+            "transaction_hash": tx_hash_hex,
+            "status": "PENDING",
+            "detail": type(exc).__name__,
+        }
+    if receipt.status != 1:
         return {
             "transaction_hash": tx_hash_hex,
             "block_number": receipt.blockNumber,
             "gas_used": receipt.gasUsed,
-            "status": "CONFIRMED",
-            "events_verified": True,
+            "status": "REVERTED",
         }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"transaction preflight/submission unavailable: {type(exc).__name__}",
-        ) from exc
+    if not verify_payment_events(receipt.logs, req.payer, req.recipient, amount_units, request_id):
+        return {
+            "transaction_hash": tx_hash_hex,
+            "block_number": receipt.blockNumber,
+            "gas_used": receipt.gasUsed,
+            "status": "UNKNOWN_REQUIRES_RECONCILIATION",
+            "detail": "expected ERC-20 Transfer and PaymentExecuted logs were not both found",
+        }
+    return {
+        "transaction_hash": tx_hash_hex,
+        "block_number": receipt.blockNumber,
+        "gas_used": receipt.gasUsed,
+        "status": "CONFIRMED",
+        "events_verified": True,
+    }
 
 
 app = FastAPI(title="AevumPay Gateway", version="0.1.0")
@@ -679,17 +669,25 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
     typed_data, action, amount_units, calldata, request_id = prepare_payment(req)
     store.reserve(req, amount_units)
     store.update(request_id, "AUTHORIZING")
+    prepared = None
+    def prepare_and_persist():
+        nonlocal prepared
+        prepared = preflight_transaction(req, amount_units, request_id)
+        store.set_signed_transaction(
+            request_id, prepared["transaction_hash"], prepared["raw_transaction"]
+        )
     try:
         authorization = authorize_and_consume(
-            req, action,
-            preflight=lambda: preflight_transaction(req, amount_units, request_id),
+            req, action, preflight=prepare_and_persist,
         )
         store.update(request_id, "AUTHORIZED_CONSUMED")
         result = submit_transaction(
-            req, amount_units, request_id,
+            req, amount_units, request_id, prepared,
             on_broadcast=lambda tx_hash, status: store.update(request_id, status, tx_hash),
         )
         store.update(request_id, result["status"], result.get("transaction_hash"), result.get("detail"))
+        if result["status"] in ("CONFIRMED", "REVERTED"):
+            store.clear_signed_transaction(request_id)
         return {
             "request_id": request_id,
             "intent_id": req.intent_id,
@@ -700,6 +698,9 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
         status = "UNKNOWN_REQUIRES_RECONCILIATION" if exc.status_code >= 500 else "REJECTED"
         store.update(request_id, status, detail=str(exc.detail))
         raise
+    except Exception as exc:
+        store.update(request_id, "UNKNOWN_REQUIRES_RECONCILIATION", detail=type(exc).__name__)
+        raise HTTPException(status_code=500, detail="payment execution interrupted; reconcile before retry") from exc
 
 
 @app.get("/v1/payments/{request_id}", dependencies=[Depends(require_gateway_key)])
@@ -711,4 +712,5 @@ def payment_status(request_id: str) -> dict[str, Any]:
     record = store.get(request_id)
     if record is None:
         raise HTTPException(status_code=404, detail="payment not found")
+    record.pop("raw_transaction", None)
     return record
