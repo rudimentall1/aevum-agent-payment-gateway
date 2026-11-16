@@ -27,6 +27,25 @@ contract MockToken {
     }
 }
 
+contract NoReturnToken {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function mint(address to, uint256 amount) external { balanceOf[to] += amount; }
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+    // Deliberately returns no data, matching legacy ERC-20 implementations.
+    function transferFrom(address from, address to, uint256 amount) external {
+        require(balanceOf[from] >= amount, "balance");
+        require(allowance[from][msg.sender] >= amount, "allowance");
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        allowance[from][msg.sender] -= amount;
+    }
+}
+
 contract AevumPayPolicyRouterTest is Test {
     uint256 internal constant CHAIN_ID = 44005;
     uint256 internal payerKey = 0xA11CE;
@@ -169,6 +188,40 @@ contract AevumPayPolicyRouterTest is Test {
         vm.prank(executor);
         vm.expectRevert(AevumPayPolicyRouter.InvalidSignature.selector);
         router.executePayment(payer, address(token), recipient, 100, id, block.timestamp + 1 hours, hex"1234");
+    }
+
+
+    function testAcceptsNoReturnERC20() public {
+        NoReturnToken legacyToken = new NoReturnToken();
+        router.setTokenSupport(address(legacyToken), true);
+        legacyToken.mint(payer, 500);
+        vm.prank(payer);
+        legacyToken.approve(address(router), 500);
+        bytes32 id = keccak256("payment-no-return-token");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes32 digest = router.paymentDigest(payer, address(legacyToken), recipient, 500, id, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(payerKey, digest);
+        vm.prank(executor);
+        router.executePayment(payer, address(legacyToken), recipient, 500, id, deadline, abi.encodePacked(r, s, v));
+        assertEq(legacyToken.balanceOf(recipient), 500);
+    }
+
+    function testRejectsZeroRecipient() public {
+        bytes32 id = keccak256("payment-zero-recipient");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _signature(address(0), 10, id, deadline);
+        vm.prank(executor);
+        vm.expectRevert(AevumPayPolicyRouter.InvalidRecipient.selector);
+        router.executePayment(payer, address(token), address(0), 10, id, deadline, sig);
+    }
+
+    function testRejectsRouterAsRecipient() public {
+        bytes32 id = keccak256("payment-router-recipient");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _signature(address(router), 10, id, deadline);
+        vm.prank(executor);
+        vm.expectRevert(AevumPayPolicyRouter.InvalidRecipient.selector);
+        router.executePayment(payer, address(token), address(router), 10, id, deadline, sig);
     }
 
     function testOwnerCanPause() public {
