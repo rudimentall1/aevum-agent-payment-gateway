@@ -127,7 +127,7 @@ contract AevumPayPolicyRouterTest is Test {
         _execute(recipient, 100, id, deadline);
         bytes memory sig = _signature(recipient, 100, id, deadline);
         vm.prank(executor);
-        vm.expectRevert(AevumPayPolicyRouter.RequestAlreadyUsed.selector);
+        vm.expectRevert(abi.encodeWithSelector(AevumPayPolicyRouter.RequestAlreadyUsed.selector, payer, id));
         router.executePayment(payer, address(token), recipient, 100, id, deadline, sig);
     }
 
@@ -137,7 +137,7 @@ contract AevumPayPolicyRouterTest is Test {
         vm.warp(deadline + 1);
         bytes memory sig = _signature(recipient, 100, id, deadline);
         vm.prank(executor);
-        vm.expectRevert(AevumPayPolicyRouter.Expired.selector);
+        vm.expectRevert(abi.encodeWithSelector(AevumPayPolicyRouter.Expired.selector, deadline));
         router.executePayment(payer, address(token), recipient, 100, id, deadline, sig);
     }
 
@@ -147,7 +147,7 @@ contract AevumPayPolicyRouterTest is Test {
         bytes32 digest = router.paymentDigest(payer, address(other), recipient, 100, id, block.timestamp + 1 hours);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(payerKey, digest);
         vm.prank(executor);
-        vm.expectRevert(AevumPayPolicyRouter.UnsupportedToken.selector);
+        vm.expectRevert(abi.encodeWithSelector(AevumPayPolicyRouter.UnsupportedToken.selector, address(other)));
         router.executePayment(payer, address(other), recipient, 100, id, block.timestamp + 1 hours, abi.encodePacked(r, s, v));
     }
 
@@ -158,7 +158,7 @@ contract AevumPayPolicyRouterTest is Test {
         bytes memory sig = _signature(recipient, 100, id, deadline);
         vm.chainId(CHAIN_ID + 1);
         vm.prank(executor);
-        vm.expectRevert(AevumPayPolicyRouter.InvalidChain.selector);
+        vm.expectRevert(abi.encodeWithSelector(AevumPayPolicyRouter.InvalidChain.selector, CHAIN_ID + 1, CHAIN_ID));
         router.executePayment(payer, address(token), recipient, 100, id, deadline, sig);
     }
 
