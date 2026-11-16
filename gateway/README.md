@@ -59,3 +59,21 @@ The payer must have approved the router to spend the required tUSD8 amount befor
 - A timeout after Verigate consumption is an ambiguous state. The gateway preserves a transaction hash when one can be derived or broadcast. Never blindly retry; inspect the ledger and chain first.
 - A consumed Verigate authorization is single-use. If broadcast fails, a fresh authorization/request ID is required after reconciliation.
 - The gateway currently assumes the Aevum testnet router and tUSD8 configuration. It is not production-ready until live RPC, Verigate, deployment and end-to-end tests pass.
+
+
+## Docker Compose
+
+The repository includes a container image and a Compose service. The container runs as an unprivileged user, keeps its SQLite ledger in a named volume, and binds the HTTP port to localhost.
+
+```bash
+cp .env.example .env
+mkdir -p secrets
+# Place the pinned Verigate issuer public-key PEM at secrets/verigate-issuer.pub.
+# Fill .env locally; never commit it.
+docker compose build
+docker compose up -d
+docker compose ps
+curl http://127.0.0.1:8080/health
+```
+
+Payment routes remain unavailable until the required runtime values are configured. Do not expose port 8080 directly to the public internet without a TLS reverse proxy and additional operational controls.
