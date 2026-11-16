@@ -78,6 +78,15 @@ class PaymentFields(BaseModel):
     purpose: str = Field(default="agent payment", max_length=256)
 
 
+class TypedDataRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    payer: str = Field(min_length=42, max_length=42)
+    recipient: str = Field(min_length=42, max_length=42)
+    amount: str = Field(min_length=1, max_length=80)
+    request_id: str = Field(min_length=66, max_length=66)
+    deadline: int = Field(gt=0, strict=True)
+
+
 class PrepareRequest(PaymentFields):
     pass
 
@@ -502,6 +511,31 @@ store = PaymentStore()
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/v1/payments/typed-data", dependencies=[Depends(require_gateway_key)])
+def typed_data_endpoint(req: TypedDataRequest) -> dict[str, Any]:
+    if not ROUTER_ADDRESS:
+        raise HTTPException(status_code=503, detail="router address is not configured")
+    try:
+        payer, recipient, token, router = validate_addresses(
+            req.payer, req.recipient, TOKEN_ADDRESS, ROUTER_ADDRESS
+        )
+        request_id = normalize_request_id(req.request_id)
+        amount_units = parse_amount(req.amount, TOKEN_DECIMALS)
+        now = int(time.time())
+        if req.deadline <= now or req.deadline > now + MAX_PAYMENT_TTL:
+            raise ValueError("deadline must be in the next 300 seconds")
+        typed = payment_typed_data(
+            payer, token, recipient, amount_units, request_id, req.deadline, router
+        )
+        return {
+            "request_id": request_id,
+            "amount_base_units": str(amount_units),
+            "eip712_typed_data": typed,
+        }
+    except (ValueError, InvalidOperation) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/v1/payments/prepare", dependencies=[Depends(require_gateway_key)])
