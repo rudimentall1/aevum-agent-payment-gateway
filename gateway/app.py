@@ -444,7 +444,8 @@ def preflight_transaction(req: ExecuteRequest, amount_units: int, request_id: st
             "data": data,
             "chainId": CHAIN_ID,
         })
-        if w3.eth.get_balance(account.address) < gas_estimate * w3.eth.gas_price:
+        required_gas_balance = int(gas_estimate * 1.2) * w3.eth.gas_price
+        if w3.eth.get_balance(account.address) < required_gas_balance:
             raise ValueError("executor native gas balance is insufficient")
     except Exception as exc:
         raise HTTPException(
