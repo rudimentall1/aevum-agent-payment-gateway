@@ -40,9 +40,10 @@ Health check: `GET /health`.
 
 ## Payment protocol
 
-1. Client creates an EIP-712 payer signature for the typed data returned by `POST /v1/payments/prepare`.
-2. Client signs the returned canonical agent payload with the Ed25519 key corresponding to the registered Verigate identity.
-3. Client submits both signatures to `POST /v1/payments/execute`.
+1. Client calls `POST /v1/payments/typed-data` and signs the returned EIP-712 data with the payer wallet.
+2. Client calls `POST /v1/payments/prepare` with the payer signature; it returns the canonical ActionIntent payload.
+3. Client signs that payload with the Ed25519 key corresponding to the registered Verigate identity.
+4. Client submits both signatures to `POST /v1/payments/execute`.
 4. Gateway authorizes and consumes the exact action through Verigate.
 5. Gateway submits the same router calldata to Aevum and records the receipt.
 
