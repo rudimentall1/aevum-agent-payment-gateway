@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 from cryptography.exceptions import InvalidSignature
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from eth_abi import decode as abi_decode, encode as abi_encode
@@ -35,6 +36,7 @@ VERIGATE_API_KEY = os.getenv("VERIGATE_API_KEY", "")
 VERIGATE_TENANT = os.getenv("VERIGATE_TENANT", "")
 VERIGATE_PUBLIC_KEY_PATH = os.getenv("VERIGATE_PUBLIC_KEY_PATH", "")
 GATEWAY_API_KEY = os.getenv("AEVUMPAY_API_KEY", "")
+TX_ENCRYPTION_KEY = os.getenv("AEVUMPAY_TX_ENCRYPTION_KEY", "")
 DB_PATH = os.getenv("AEVUMPAY_DB", "data/aevumpay-gateway.db")
 HTTP_TIMEOUT = float(os.getenv("AEVUMPAY_HTTP_TIMEOUT", "8"))
 MAX_PAYMENT_TTL = 300
@@ -277,8 +279,10 @@ def verify_execution_authorization(
 
 
 class PaymentStore:
-    def __init__(self, path: str = DB_PATH):
+    def __init__(self, path: str = DB_PATH, encryption_key: str | bytes | None = None):
         self.path = path
+        key = encryption_key if encryption_key is not None else TX_ENCRYPTION_KEY
+        self.cipher = Fernet(key.encode() if isinstance(key, str) else key) if key else None
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("""
@@ -328,11 +332,14 @@ class PaymentStore:
             )
 
     def set_signed_transaction(self, request_id: str, tx_hash: str, raw_transaction: bytes) -> None:
+        if self.cipher is None:
+            raise RuntimeError("AEVUMPAY_TX_ENCRYPTION_KEY is required to persist signed transactions")
+        encrypted_transaction = self.cipher.encrypt(raw_transaction)
         with self._connect() as db:
             db.execute(
                 """UPDATE payments SET status='SIGNED_AWAITING_CONSUME',
                    tx_hash=?, raw_transaction=?, updated_at=? WHERE request_id=?""",
-                (tx_hash, raw_transaction, int(time.time()), request_id.lower()),
+                (tx_hash, encrypted_transaction, int(time.time()), request_id.lower()),
             )
 
     def clear_signed_transaction(self, request_id: str) -> None:
@@ -391,6 +398,7 @@ def validate_configuration() -> None:
         ("VERIGATE_API_KEY", VERIGATE_API_KEY),
         ("VERIGATE_PUBLIC_KEY_PATH", VERIGATE_PUBLIC_KEY_PATH),
         ("AEVUMPAY_API_KEY", GATEWAY_API_KEY),
+        ("AEVUMPAY_TX_ENCRYPTION_KEY", TX_ENCRYPTION_KEY),
     ) if not value]
     if missing:
         raise RuntimeError("missing required configuration: " + ", ".join(missing))
