@@ -448,7 +448,10 @@ def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any]) -> dict[s
         raise HTTPException(status_code=502, detail="Verigate authorization/consume failed closed") from exc
 
 
-def submit_transaction(req: ExecuteRequest, amount_units: int, request_id: str) -> dict[str, Any]:
+def submit_transaction(
+    req: ExecuteRequest, amount_units: int, request_id: str,
+    on_broadcast=None,
+) -> dict[str, Any]:
     if not Web3.is_address(ROUTER_ADDRESS):
         raise HTTPException(status_code=503, detail="router address is not configured")
     try:
@@ -490,18 +493,51 @@ def submit_transaction(req: ExecuteRequest, amount_units: int, request_id: str) 
         }
         tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.2)
         signed = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=max(60, HTTP_TIMEOUT))
+        expected_hash = Web3.keccak(signed.raw_transaction).hex()
+        try:
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        except Exception as exc:
+            # RPC may have accepted the raw transaction before the response was lost.
+            # Keep the locally derived hash and require reconciliation; never blind-retry.
+            if on_broadcast:
+                on_broadcast(expected_hash, "UNKNOWN_REQUIRES_RECONCILIATION")
+            return {
+                "transaction_hash": expected_hash,
+                "status": "UNKNOWN_REQUIRES_RECONCILIATION",
+                "detail": type(exc).__name__,
+            }
+
+        tx_hash_hex = tx_hash.hex()
+        if on_broadcast:
+            on_broadcast(tx_hash_hex, "PENDING")
+        try:
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=max(60, HTTP_TIMEOUT))
+        except Exception as exc:
+            return {
+                "transaction_hash": tx_hash_hex,
+                "status": "PENDING",
+                "detail": type(exc).__name__,
+            }
         if receipt.status != 1:
-            raise RuntimeError(f"transaction reverted: {tx_hash.hex()}")
+            return {
+                "transaction_hash": tx_hash_hex,
+                "block_number": receipt.blockNumber,
+                "gas_used": receipt.gasUsed,
+                "status": "REVERTED",
+            }
         return {
-            "transaction_hash": tx_hash.hex(),
+            "transaction_hash": tx_hash_hex,
             "block_number": receipt.blockNumber,
             "gas_used": receipt.gasUsed,
             "status": "CONFIRMED",
         }
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"transaction submission/reconciliation required: {type(exc).__name__}") from exc
+        raise HTTPException(
+            status_code=503,
+            detail=f"transaction preflight/submission unavailable: {type(exc).__name__}",
+        ) from exc
 
 
 app = FastAPI(title="AevumPay Gateway", version="0.1.0")
@@ -561,8 +597,11 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
     try:
         authorization = authorize_and_consume(req, action)
         store.update(request_id, "AUTHORIZED_CONSUMED")
-        result = submit_transaction(req, amount_units, request_id)
-        store.update(request_id, result["status"], result["transaction_hash"])
+        result = submit_transaction(
+            req, amount_units, request_id,
+            on_broadcast=lambda tx_hash, status: store.update(request_id, status, tx_hash),
+        )
+        store.update(request_id, result["status"], result.get("transaction_hash"), result.get("detail"))
         return {
             "request_id": request_id,
             "intent_id": req.intent_id,
