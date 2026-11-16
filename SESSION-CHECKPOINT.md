@@ -1,6 +1,6 @@
 # AevumPay Session Checkpoint
 
-Last updated: 2026-11-16 (gateway container build and CI verified)
+Last updated: 2026-11-16 (gateway preflight, receipt recovery and Docker CI verified)
 
 ## Repository state
 - Repository: https://github.com/rudimentall1/aevum-agent-payment-gateway
@@ -71,9 +71,9 @@ AevumPay is a QDay Aevum testnet payment gateway. It uses an external Verigate a
 - Foundry coverage includes executor restrictions, signature tampering, replay, expiry, unsupported token, wrong chain, zero amount, malformed signature, failed-transfer rollback, no-return ERC-20 compatibility and recipient restrictions. GitHub Actions executed and passed all 15 tests. Tests have not been run locally in this runtime.
 - Solidity CI runs `forge build --sizes` and `forge test -vvv` on pull requests and pushes to `main` and `feat/**`. Latest main run passed: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43841842492.
 - Initial FastAPI gateway is implemented under `gateway/`: `/v1/payments/typed-data`, `/v1/payments/prepare`, `/v1/payments/execute`, `/v1/payments/{request_id}` and `/health`. It derives calldata, enforces decimal-string amounts, verifies payer EIP-712 signatures and pinned Verigate Ed25519 execution authorizations, calls Verigate authorize/consume, submits the transaction and records payment status in SQLite.
-- Gateway verifies the exact ERC-20 Transfer and PaymentExecuted events before marking a payment CONFIRMED. It preserves transaction hashes for pending/ambiguous receipt states and rejects duplicate request IDs.
-- Gateway CI passed 5 unit tests and built the Docker image on the latest implementation commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43842077981.
-- Solidity CI also passed on that commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43842078034.
+- Gateway verifies the exact ERC-20 Transfer and PaymentExecuted events before marking a payment CONFIRMED. It performs chain, executor, pause, token, balance, allowance and gas preflight before Verigate consume; persists the deterministic transaction hash before RPC broadcast; preserves pending/ambiguous receipt states; and rejects duplicate request IDs.
+- Gateway CI passed 5 unit tests and built the Docker image on latest implementation commit `47dfc9922f35a6b428ab4da92fea8f3c96f5768d`: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43842350154.
+- Solidity CI also passed on that commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43842350189.
 - A non-root Dockerfile, Compose service, `.env.example` and runtime setup guide are present. Docker image build is CI-verified; Compose has not been started with live credentials.
 - Gateway is not yet live-integrated: no Verigate URL, API key, tenant, issuer public key, router address or executor key has been configured. No Aevum testnet deployment or payment has occurred.
 - Verigate live integration: not configured or tested.
