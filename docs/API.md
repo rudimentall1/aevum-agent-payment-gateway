@@ -54,9 +54,9 @@ Send the same request fields plus `agent_signature`. The gateway:
 3. Calls Verigate `POST /v1/actions/authorize`.
 4. Requires ALLOW and a valid Ed25519 execution authorization signed by the pinned issuer key.
 5. Checks the authorization identity, capability, agent, intent and action hash.
-6. Calls Verigate `POST /v1/execution/consume` and proceeds only on `execute=true`.
-7. Checks chain ID, router executor, pause state, token allowlist, token decimals, payer balance and allowance.
-8. Signs and broadcasts the exact router transaction, then waits for a receipt.
+6. Checks chain ID, router executor, pause state, token allowlist, token decimals, payer balance/allowance and gas; signs the exact EVM transaction and encrypts its raw bytes in SQLite.
+7. Calls Verigate `POST /v1/execution/consume` and proceeds only on `execute=true`.
+8. Broadcasts the already-signed bytes without rebuilding nonce, gas price or calldata, then waits for a receipt.
 
 Verigate consumption is not a transaction broadcast. The gateway is responsible for the EVM transaction and reconciliation.
 
@@ -64,9 +64,9 @@ Verigate consumption is not a transaction broadcast. The gateway is responsible 
 
 `GET /v1/payments/{request_id}`
 
-The SQLite store records request ID, immutable payment fields, status and transaction hash. Duplicate request IDs return HTTP 409 and are never blindly re-executed.
+The SQLite store records request ID, immutable payment fields, status and transaction hash. Signed raw transactions are encrypted at rest with a separately configured Fernet key. Duplicate request IDs return HTTP 409 and are never blindly re-executed.
 
-Possible states include `AUTHORIZING`, `AUTHORIZED_CONSUMED`, `SUBMITTING`, `PENDING`, `CONFIRMED`, `REVERTED`, `REJECTED` and `UNKNOWN_REQUIRES_RECONCILIATION`. A payment is marked `CONFIRMED` only after the receipt succeeds and both the exact ERC-20 `Transfer` and router `PaymentExecuted` events are found. The transaction hash is recorded before waiting for the receipt. If the gateway crashes around Verigate consumption or an RPC timeout, inspect status and chain state before any manual recovery. The one-time Verigate authorization is not automatically retried.
+Possible states include `AUTHORIZING`, `AUTHORIZED_CONSUMED`, `SUBMITTING`, `PENDING`, `CONFIRMED`, `REVERTED`, `REJECTED` and `UNKNOWN_REQUIRES_RECONCILIATION`. A payment is marked `CONFIRMED` only after the receipt succeeds and both the exact ERC-20 `Transfer` and router `PaymentExecuted` events are found. The transaction hash is recorded before waiting for the receipt. If the gateway crashes after the ledger records successful Verigate consumption, `POST /v1/payments/{request_id}/reconcile` can re-broadcast only the exact stored signed transaction and reconcile its receipt. If the process stops after Verigate consume but before that consume success is durably recorded, automatic recovery is blocked and Verigate state must be reconciled manually.
 
 ## Configuration
 
