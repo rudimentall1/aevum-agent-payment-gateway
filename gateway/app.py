@@ -565,6 +565,10 @@ def submit_transaction(
         tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.2)
         signed = account.sign_transaction(tx)
         expected_hash = Web3.keccak(signed.raw_transaction).hex()
+        if on_broadcast:
+            # Persist the locally-derived transaction hash before handing the
+            # raw transaction to the RPC. A process crash can then be reconciled.
+            on_broadcast(expected_hash, "SUBMITTING")
         try:
             tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         except Exception as exc:
