@@ -10,7 +10,8 @@ Last updated: 2026-11-16 (implementation session)
 - Previous repository history is not present in this new repository.
 - Initial checkpoint commit: `65081b984629de6757dca287fd3a980721e523d7`.
 - Documentation restoration commits are present on `main` through `15f0b25b4798124b7953051c5afc3daa0dd0660f`.
-- Implementation branch: `feat/policy-router`; latest known branch commit: `99e6e75589a9675643ef08eb12f306d847cc4245`.
+- Implementation branch: `feat/policy-router`; latest verified implementation commit at this checkpoint: `fd763e53e492a87dc0ca812467b707cbff29fcd7`.
+- Draft pull request #1 targets `main`: https://github.com/rudimentall1/aevum-agent-payment-gateway/pull/1.
 
 ## Project
 **AevumPay: Policy-Controlled Payments for AI Agents**
@@ -40,7 +41,7 @@ AevumPay is a QDay Aevum testnet payment gateway. It uses an external Verigate a
 
 ## Architecture decisions
 - Primary execution path is EOA-based. ERC-4337 / session-key support is optional only if official Aevum testnet endpoints and addresses are published and a real UserOperation can be reproduced.
-- Preferred contract is a non-custodial pull-payment policy router. The payer approves the router; router checks recipient, exact amount, expiry, nonce/replay and token, then calls transferFrom.
+- Preferred contract is a non-custodial pull-payment policy router. The payer approves the router and signs an EIP-712 envelope binding payer, token, recipient, amount, request ID, deadline, chain ID and router address. The configured executor relays it; router checks signature, recipient, exact amount, expiry, replay and token, then calls transferFrom.
 - Funds remain in the payer account until execution. No custodial escrow.
 - Verigate authorization and on-chain payment enforcement are separate trust boundaries.
 - Do not claim the EVM contract verifies Verigate Ed25519 signatures.
@@ -64,7 +65,8 @@ AevumPay is a QDay Aevum testnet payment gateway. It uses an external Verigate a
 - Aevum RPC and tUSD8 contract: not live-verified from the previous sandbox (DNS resolution failed there; this does not prove global outage).
 - AevumPay implementation: initial EIP-712 policy router, Foundry test suite, deployment script and Solidity CI workflow committed on `feat/policy-router`.
 - AevumPay contract: not deployed.
-- Foundry tests are authored (including executor, signature tampering, replay, expiry, unsupported token, wrong chain, zero amount, malformed signature and failed-token-transfer cases) but have NOT been executed in this environment (Forge/Solc are not installed; outbound DNS/network unavailable). The available commit-workflow lookup is limited to PR-triggered runs and returned none; push-triggered CI status remains unverified.
+- Foundry tests are authored (including executor, signature tampering, replay, expiry, unsupported token, wrong chain, zero amount, malformed signature, failed-token-transfer rollback, no-return ERC-20 compatibility and recipient restrictions) but have NOT been executed locally because Forge/Solc are absent from this runtime.
+- Solidity CI now runs `forge build --sizes` and `forge test -vvv` on pull requests and pushes. PR #1 is open; no CI status has been returned yet by the GitHub status/workflow lookup. Treat CI as pending/unverified.
 - Verigate live integration: not configured or tested.
 - No testnet transaction has been sent by AevumPay.
 - Gensyn2 Desktop Commander connection was unavailable in the previous session. No secrets, API keys or private keys are recorded here.
@@ -79,8 +81,8 @@ At the beginning of every session:
 6. Never claim work or external verification that did not occur.
 
 ## Next actions
-1. Run Foundry formatter and unit tests in CI; fix any compiler/test failures.
-2. Review and merge `feat/policy-router` into `main` after CI is green.
+1. Obtain GitHub Actions result for PR #1; fix compiler/test failures and rerun.
+2. Review and merge `feat/policy-router` into `main` only after CI is green.
 3. Confirm live Aevum RPC and tUSD8 metadata from a network-capable environment.
 4. Deploy the router on Aevum testnet, record deployment address and receipt.
 5. Confirm a real self-hosted Verigate endpoint, tenant/auth configuration, DB path and safe identity/capability bootstrap route before integration.
