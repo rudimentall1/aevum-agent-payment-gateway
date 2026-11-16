@@ -171,7 +171,7 @@ contract AevumPayPolicyRouterTest is Test {
         router.executePayment(payer, address(token), recipient, 0, id, deadline, sig);
     }
 
-    function testFailedTokenTransferDoesNotConsumeRequest() public {
+    function testTransferFailureDoesNotConsumeRequest() public {
         bytes32 id = keccak256("payment-token-failure");
         uint256 deadline = block.timestamp + 1 hours;
         bytes memory sig = _signature(recipient, 100, id, deadline);
