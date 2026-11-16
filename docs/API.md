@@ -6,7 +6,13 @@ The first FastAPI gateway slice is implemented in `gateway/app.py`. It exposes a
 
 All payment routes require `X-API-Key: <AEVUMPAY_API_KEY>`. `GET /health` is public.
 
-## Prepare a payment
+## Build payer typed data
+
+`POST /v1/payments/typed-data`
+
+Send payer, recipient, decimal-string amount, request ID and deadline. The gateway returns the exact EIP-712 domain and Payment struct. The payer signs this typed data with the wallet that owns the tUSD8 balance.
+
+## Prepare the agent authorization payload
 
 `POST /v1/payments/prepare`
 
@@ -31,7 +37,7 @@ Example request:
 
 The amount is a decimal string. Floats, exponent notation, signs, whitespace, zero, negative values and precision beyond the configured token decimals are rejected. The gateway derives base units and constructs router calldata itself. Caller-supplied calldata is never accepted.
 
-The payer signature must be an EIP-712 signature for the returned domain and Payment struct. The prepare response includes:
+The payer signature must be an EIP-712 signature for the domain and Payment struct returned by `/v1/payments/typed-data`. The prepare response includes:
 - `eip712_typed_data` for the payer signature.
 - `agent_signing_payload` and `agent_signing_payload_base64` for the Ed25519 identity signature.
 - Derived router calldata for inspection.
