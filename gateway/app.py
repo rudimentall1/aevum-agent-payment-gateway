@@ -295,6 +295,7 @@ class PaymentStore:
                     status TEXT NOT NULL,
                     tx_hash TEXT,
                     raw_transaction BLOB,
+                    authorization_consumed INTEGER NOT NULL DEFAULT 0,
                     detail TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
@@ -303,6 +304,8 @@ class PaymentStore:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(payments)")}
             if "raw_transaction" not in columns:
                 db.execute("ALTER TABLE payments ADD COLUMN raw_transaction BLOB")
+            if "authorization_consumed" not in columns:
+                db.execute("ALTER TABLE payments ADD COLUMN authorization_consumed INTEGER NOT NULL DEFAULT 0")
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -327,8 +330,10 @@ class PaymentStore:
     def update(self, request_id: str, status: str, tx_hash: str | None = None, detail: str | None = None) -> None:
         with self._connect() as db:
             db.execute(
-                "UPDATE payments SET status=?, tx_hash=COALESCE(?, tx_hash), detail=?, updated_at=? WHERE request_id=?",
-                (status, tx_hash, detail, int(time.time()), request_id.lower()),
+                """UPDATE payments SET status=?, tx_hash=COALESCE(?, tx_hash), detail=?,
+                   authorization_consumed=CASE WHEN ?='AUTHORIZED_CONSUMED' THEN 1 ELSE authorization_consumed END,
+                   updated_at=? WHERE request_id=?""",
+                (status, tx_hash, detail, status, int(time.time()), request_id.lower()),
             )
 
     def set_signed_transaction(self, request_id: str, tx_hash: str, raw_transaction: bytes) -> None:
@@ -709,6 +714,69 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
     except Exception as exc:
         store.update(request_id, "UNKNOWN_REQUIRES_RECONCILIATION", detail=type(exc).__name__)
         raise HTTPException(status_code=500, detail="payment execution interrupted; reconcile before retry") from exc
+
+
+@app.post("/v1/payments/{request_id}/reconcile", dependencies=[Depends(require_gateway_key)])
+def reconcile_payment(request_id: str) -> dict[str, Any]:
+    try:
+        request_id = normalize_request_id(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record = store.get(request_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="payment not found")
+    if record["status"] in ("CONFIRMED", "REVERTED", "REJECTED") and not record.get("raw_transaction"):
+        record.pop("raw_transaction", None)
+        return record
+    if not record.get("authorization_consumed"):
+        raise HTTPException(
+            status_code=409,
+            detail="Verigate consume is not confirmed in the ledger; manual authorization reconciliation required",
+        )
+    if not record.get("raw_transaction") or store.cipher is None:
+        raise HTTPException(status_code=409, detail="no encrypted signed transaction is available for reconciliation")
+    try:
+        raw_transaction = store.cipher.decrypt(record["raw_transaction"])
+        expected_hash = Web3.keccak(raw_transaction).hex()
+        w3 = Web3(Web3.HTTPProvider(RPC_URL, request_kwargs={"timeout": HTTP_TIMEOUT}))
+        if not w3.is_connected() or w3.eth.chain_id != CHAIN_ID:
+            raise RuntimeError("Aevum RPC unavailable or wrong chain")
+        # Re-broadcasting the identical signed bytes is idempotent at the tx-hash
+        # level. Nodes may report already-known/nonce-too-low if it was accepted;
+        # in either case, receipt lookup below remains authoritative.
+        try:
+            returned_hash = w3.eth.send_raw_transaction(raw_transaction).hex()
+            if returned_hash.lower() != expected_hash.lower():
+                raise RuntimeError("RPC returned a transaction hash mismatch")
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
+        receipt = w3.eth.wait_for_transaction_receipt(
+            Web3.to_bytes(hexstr=expected_hash), timeout=max(60, HTTP_TIMEOUT)
+        )
+        if receipt.status != 1:
+            store.update(request_id, "REVERTED", expected_hash, "transaction receipt status is 0")
+            store.clear_signed_transaction(request_id)
+        elif verify_payment_events(
+            receipt.logs, record["payer"], record["recipient"],
+            int(record["amount_base_units"]), request_id,
+        ):
+            store.update(request_id, "CONFIRMED", expected_hash, None)
+            store.clear_signed_transaction(request_id)
+        else:
+            store.update(
+                request_id, "UNKNOWN_REQUIRES_RECONCILIATION", expected_hash,
+                "receipt succeeded but expected payment events were not both found",
+            )
+    except Exception as exc:
+        store.update(
+            request_id, "PENDING", record.get("tx_hash") or None,
+            f"reconciliation incomplete: {type(exc).__name__}",
+        )
+    result = store.get(request_id) or {}
+    result.pop("raw_transaction", None)
+    return result
 
 
 @app.get("/v1/payments/{request_id}", dependencies=[Depends(require_gateway_key)])
