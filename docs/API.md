@@ -1,43 +1,67 @@
-# Gateway API (planned contract)
+# Gateway API
 
-The HTTP interface below is the intended MVP contract. It is not implemented yet; request/response examples are design-level, not live API behavior.
+The first FastAPI gateway slice is implemented in `gateway/app.py`. It exposes a prepare/execute flow so the payer signature and agent identity signature can be produced over the exact same immutable payment envelope.
 
-## Create payment
-`POST /v1/payments`
+## Authentication
 
-Request:
+All payment routes require `X-API-Key: <AEVUMPAY_API_KEY>`. `GET /health` is public.
+
+## Prepare a payment
+
+`POST /v1/payments/prepare`
+
+Example request:
+
 ```json
 {
-  "agent_id": "agent-demo",
-  "payer": "0x...",
-  "token": "0x456569838f1d43009A91ebA4263147Afd7233483",
-  "recipient": "0x...",
+  "payer": "0xPayerAddress",
+  "recipient": "0xMerchantAddress",
   "amount": "1.250000",
-  "request_id": "client-generated-unique-id",
-  "expires_at": 1790000000,
+  "request_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+  "deadline": 1800000000,
+  "payer_signature": "0x...",
+  "agent_id": "agent-demo",
+  "identity_id": "<sha256-of-agent-ed25519-public-key>",
+  "capability_id": "cap-demo-payment",
+  "intent_id": "payment-intent-001",
+  "timestamp": 1799999900.0,
   "purpose": "invoice settlement"
 }
 ```
 
-Rules:
-- `amount` is a decimal string, never a JSON number.
-- Reject exponent notation, signs, whitespace, zero, negative values and precision beyond token decimals.
-- The gateway derives the integer base-unit amount using decimal arithmetic.
-- Request ID is unique and bounded in length.
-- Payer and recipient must be valid nonzero EVM addresses.
-- Token must be allowlisted.
-- Expiry must be in the future and within a configured maximum horizon.
+The amount is a decimal string. Floats, exponent notation, signs, whitespace, zero, negative values and precision beyond the configured token decimals are rejected. The gateway derives base units and constructs router calldata itself. Caller-supplied calldata is never accepted.
+
+The payer signature must be an EIP-712 signature for the returned domain and Payment struct. The prepare response includes:
+- `eip712_typed_data` for the payer signature.
+- `agent_signing_payload` and `agent_signing_payload_base64` for the Ed25519 identity signature.
+- Derived router calldata for inspection.
+
+The agent must sign the exact canonical bytes represented by `agent_signing_payload_base64`. Do not change any field between prepare and execute.
+
+## Execute a payment
+
+`POST /v1/payments/execute`
+
+Send the same request fields plus `agent_signature`. The gateway:
+1. Revalidates the payer EIP-712 signature and exact amount.
+2. Reconstructs the same ActionIntent and transaction envelope.
+3. Calls Verigate `POST /v1/actions/authorize`.
+4. Requires ALLOW and a valid Ed25519 execution authorization signed by the pinned issuer key.
+5. Checks the authorization identity, capability, agent, intent and action hash.
+6. Calls Verigate `POST /v1/execution/consume` and proceeds only on `execute=true`.
+7. Checks chain ID, router executor, pause state, token allowlist, token decimals, payer balance and allowance.
+8. Signs and broadcasts the exact router transaction, then waits for a receipt.
+
+Verigate consumption is not a transaction broadcast. The gateway is responsible for the EVM transaction and reconciliation.
 
 ## Payment status
+
 `GET /v1/payments/{request_id}`
 
-Possible states: `RECEIVED`, `AUTHORIZING`, `AUTHORIZED`, `SUBMITTING`, `PENDING`, `CONFIRMED`, `REJECTED`, `UNKNOWN_REQUIRES_RECONCILIATION`.
+The SQLite store records request ID, immutable payment fields, status and transaction hash. Duplicate request IDs return HTTP 409 and are never blindly re-executed.
 
-Never label a timeout as a definitive failure without checking chain state.
+Possible states include `AUTHORIZING`, `AUTHORIZED_CONSUMED`, `CONFIRMED`, `REJECTED` and `UNKNOWN_REQUIRES_RECONCILIATION`. If the gateway crashes around Verigate consumption or an RPC timeout, inspect status and chain state before any manual recovery. The one-time Verigate authorization is not automatically retried.
 
-## Security
-- Authenticate callers.
-- Bind idempotency to payer + request ID + immutable payment fields.
-- Never accept arbitrary transaction calldata from the caller.
-- Never expose Verigate secrets, signatures or internal errors.
-- All external-service errors fail closed.
+## Configuration
+
+See [Gateway setup](../gateway/README.md). No keys or live endpoints are committed. The issuer Ed25519 public key must be pinned locally; the gateway does not trust a key fetched dynamically from an unauthenticated source.
