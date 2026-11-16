@@ -66,7 +66,7 @@ Verigate consumption is not a transaction broadcast. The gateway is responsible 
 
 The SQLite store records request ID, immutable payment fields, status and transaction hash. Duplicate request IDs return HTTP 409 and are never blindly re-executed.
 
-Possible states include `AUTHORIZING`, `AUTHORIZED_CONSUMED`, `PENDING`, `CONFIRMED`, `REVERTED`, `REJECTED` and `UNKNOWN_REQUIRES_RECONCILIATION`. A payment is marked `CONFIRMED` only after the receipt succeeds and both the exact ERC-20 `Transfer` and router `PaymentExecuted` events are found. The transaction hash is recorded before waiting for the receipt. If the gateway crashes around Verigate consumption or an RPC timeout, inspect status and chain state before any manual recovery. The one-time Verigate authorization is not automatically retried.
+Possible states include `AUTHORIZING`, `AUTHORIZED_CONSUMED`, `SUBMITTING`, `PENDING`, `CONFIRMED`, `REVERTED`, `REJECTED` and `UNKNOWN_REQUIRES_RECONCILIATION`. A payment is marked `CONFIRMED` only after the receipt succeeds and both the exact ERC-20 `Transfer` and router `PaymentExecuted` events are found. The transaction hash is recorded before waiting for the receipt. If the gateway crashes around Verigate consumption or an RPC timeout, inspect status and chain state before any manual recovery. The one-time Verigate authorization is not automatically retried.
 
 ## Configuration
 
