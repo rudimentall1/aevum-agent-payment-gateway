@@ -7,6 +7,9 @@ import "../src/AevumPayPolicyRouter.sol";
 contract MockToken {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
+    bool public failTransfer;
+
+    function setFailTransfer(bool value) external { failTransfer = value; }
 
     function mint(address to, uint256 amount) external { balanceOf[to] += amount; }
     function approve(address spender, uint256 amount) external returns (bool) {
@@ -14,6 +17,7 @@ contract MockToken {
         return true;
     }
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        if (failTransfer) return false;
         require(balanceOf[from] >= amount, "balance");
         require(allowance[from][msg.sender] >= amount, "allowance");
         balanceOf[from] -= amount;
@@ -126,6 +130,45 @@ contract AevumPayPolicyRouterTest is Test {
         vm.prank(executor);
         vm.expectRevert(AevumPayPolicyRouter.UnsupportedToken.selector);
         router.executePayment(payer, address(other), recipient, 100, id, block.timestamp + 1 hours, abi.encodePacked(r, s, v));
+    }
+
+
+    function testRejectsWrongChain() public {
+        bytes32 id = keccak256("payment-wrong-chain");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _signature(recipient, 100, id, deadline);
+        vm.chainId(CHAIN_ID + 1);
+        vm.prank(executor);
+        vm.expectRevert(AevumPayPolicyRouter.InvalidChain.selector);
+        router.executePayment(payer, address(token), recipient, 100, id, deadline, sig);
+    }
+
+    function testRejectsZeroAmount() public {
+        bytes32 id = keccak256("payment-zero");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _signature(recipient, 0, id, deadline);
+        vm.prank(executor);
+        vm.expectRevert(AevumPayPolicyRouter.InvalidAmount.selector);
+        router.executePayment(payer, address(token), recipient, 0, id, deadline, sig);
+    }
+
+    function testFailedTokenTransferDoesNotConsumeRequest() public {
+        bytes32 id = keccak256("payment-token-failure");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _signature(recipient, 100, id, deadline);
+        token.setFailTransfer(true);
+        vm.prank(executor);
+        vm.expectRevert(AevumPayPolicyRouter.TokenTransferFailed.selector);
+        router.executePayment(payer, address(token), recipient, 100, id, deadline, sig);
+        assertFalse(router.usedRequestIds(payer, id));
+        assertEq(token.balanceOf(recipient), 0);
+    }
+
+    function testRejectsMalformedSignature() public {
+        bytes32 id = keccak256("payment-bad-signature");
+        vm.prank(executor);
+        vm.expectRevert(AevumPayPolicyRouter.InvalidSignature.selector);
+        router.executePayment(payer, address(token), recipient, 100, id, block.timestamp + 1 hours, hex"1234");
     }
 
     function testOwnerCanPause() public {
