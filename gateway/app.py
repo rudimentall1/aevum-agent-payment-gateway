@@ -16,7 +16,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from eth_abi import encode as abi_encode
+from eth_abi import decode as abi_decode, encode as abi_encode
 from eth_account import Account
 from eth_account.messages import encode_typed_data
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -326,6 +326,32 @@ class PaymentStore:
             return dict(row) if row else None
 
 
+def verify_payment_events(logs: list[Any], payer: str, recipient: str, amount: int, request_id: str) -> bool:
+    transfer_topic = Web3.keccak(text="Transfer(address,address,uint256)")
+    payment_topic = Web3.keccak(text="PaymentExecuted(address,address,address,uint256,bytes32)")
+    payer_bytes = bytes.fromhex(Web3.to_checksum_address(payer)[2:].lower())
+    recipient_bytes = bytes.fromhex(Web3.to_checksum_address(recipient)[2:].lower())
+    router_bytes = bytes.fromhex(Web3.to_checksum_address(ROUTER_ADDRESS)[2:].lower())
+    token_bytes = bytes.fromhex(Web3.to_checksum_address(TOKEN_ADDRESS)[2:].lower())
+    request_bytes = bytes.fromhex(request_id[2:])
+    transfer_ok = False
+    payment_ok = False
+    for log in logs:
+        topics = [bytes(item) for item in log.get("topics", [])]
+        address_bytes = bytes.fromhex(Web3.to_checksum_address(log["address"])[2:].lower())
+        if address_bytes == token_bytes and len(topics) == 3 and topics[0] == transfer_topic:
+            from_bytes = topics[1][-20:]
+            to_bytes = topics[2][-20:]
+            value = abi_decode(["uint256"], bytes(log["data"]))[0]
+            if from_bytes == payer_bytes and to_bytes == recipient_bytes and value == amount:
+                transfer_ok = True
+        if address_bytes == router_bytes and len(topics) == 4 and topics[0] == payment_topic:
+            event_payer, event_token, event_recipient = topics[1][-20:], topics[2][-20:], topics[3][-20:]
+            event_amount, event_request = abi_decode(["uint256", "bytes32"], bytes(log["data"]))
+            if event_payer == payer_bytes and event_token == token_bytes and event_recipient == recipient_bytes and event_amount == amount and event_request == request_bytes:
+                payment_ok = True
+    return transfer_ok and payment_ok
+
 def load_issuer_key() -> Ed25519PublicKey:
     if not VERIGATE_PUBLIC_KEY_PATH:
         raise RuntimeError("VERIGATE_PUBLIC_KEY_PATH is required; pin the issuer public key")
@@ -525,11 +551,20 @@ def submit_transaction(
                 "gas_used": receipt.gasUsed,
                 "status": "REVERTED",
             }
+        if not verify_payment_events(receipt.logs, req.payer, req.recipient, amount_units, request_id):
+            return {
+                "transaction_hash": tx_hash_hex,
+                "block_number": receipt.blockNumber,
+                "gas_used": receipt.gasUsed,
+                "status": "UNKNOWN_REQUIRES_RECONCILIATION",
+                "detail": "expected ERC-20 Transfer and PaymentExecuted logs were not both found",
+            }
         return {
             "transaction_hash": tx_hash_hex,
             "block_number": receipt.blockNumber,
             "gas_used": receipt.gasUsed,
             "status": "CONFIRMED",
+            "events_verified": True,
         }
     except HTTPException:
         raise
