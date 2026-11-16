@@ -133,6 +133,7 @@ def test_signed_transaction_is_durable_and_hidden_from_public_record(tmp_path):
     assert Fernet(encryption_key).decrypt(record["raw_transaction"]) == raw_tx
 
     store.update(req.request_id, "AUTHORIZED_CONSUMED")
+    assert store.get(req.request_id)["authorization_consumed"] == 1
     assert Fernet(encryption_key).decrypt(store.get(req.request_id)["raw_transaction"]) == raw_tx
     store.clear_signed_transaction(req.request_id)
     assert store.get(req.request_id)["raw_transaction"] is None
