@@ -710,6 +710,10 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
     except HTTPException as exc:
         status = "UNKNOWN_REQUIRES_RECONCILIATION" if exc.status_code >= 500 else "REJECTED"
         store.update(request_id, status, detail=str(exc.detail))
+        if status == "REJECTED":
+            # A deterministic pre-consume failure or explicit Verigate denial
+            # cannot authorize broadcasting this signed transaction. Discard it.
+            store.clear_signed_transaction(request_id)
         raise
     except Exception as exc:
         store.update(request_id, "UNKNOWN_REQUIRES_RECONCILIATION", detail=type(exc).__name__)
