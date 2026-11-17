@@ -535,3 +535,69 @@ def test_authorize_and_consume_fails_closed_on_consume_transport_error(monkeypat
 
     assert exc.value.status_code == 502
     assert len(client.posts) == 2
+
+
+def test_payment_execution_serializes_nonce_preflight_across_requests(monkeypatch, tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    encryption_key = Fernet.generate_key()
+    payment_store = PaymentStore(str(tmp_path / "serialized.sqlite"), encryption_key=encryption_key)
+    monkeypatch.setattr(gateway_app, "store", payment_store)
+
+    first_preflight_started = threading.Event()
+    release_first_preflight = threading.Event()
+    second_preflight_started = threading.Event()
+    call_lock = threading.Lock()
+    preflight_calls = 0
+
+    def fake_prepare_payment(req):
+        return ({}, {"action_type": "payment"}, 100, "0x1234", req.request_id)
+
+    def fake_preflight(req, amount_units, request_id):
+        nonlocal preflight_calls
+        with call_lock:
+            preflight_calls += 1
+            call_number = preflight_calls
+        if call_number == 1:
+            first_preflight_started.set()
+            assert release_first_preflight.wait(timeout=3)
+        else:
+            second_preflight_started.set()
+        return {
+            "web3": object(),
+            "raw_transaction": b"signed-" + request_id.encode(),
+            "transaction_hash": "0x" + ("ab" if call_number == 1 else "cd") * 32,
+        }
+
+    authorization = {"payload": {"authorization_id": "auth-test"}}
+
+    def fake_authorize(_req, _action, preflight=None):
+        preflight()
+        return authorization
+
+    def fake_submit(_req, _amount, _request_id, _prepared, on_broadcast=None):
+        return {"status": "CONFIRMED", "transaction_hash": "0x" + "ef" * 32}
+
+    monkeypatch.setattr(gateway_app, "prepare_payment", fake_prepare_payment)
+    monkeypatch.setattr(gateway_app, "preflight_transaction", fake_preflight)
+    monkeypatch.setattr(gateway_app, "authorize_and_consume", fake_authorize)
+    monkeypatch.setattr(gateway_app, "submit_transaction", fake_submit)
+
+    first = _verigate_test_request()
+    second = first.model_copy(update={"request_id": "0x" + "aa" * 32})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_future = pool.submit(gateway_app.execute, first)
+        assert first_preflight_started.wait(timeout=2)
+        second_future = pool.submit(gateway_app.execute, second)
+        try:
+            assert not second_preflight_started.wait(timeout=0.2), (
+                "a second payment entered nonce preflight while the first was unresolved"
+            )
+        finally:
+            release_first_preflight.set()
+        first_future.result(timeout=3)
+        second_future.result(timeout=3)
+
+    assert preflight_calls == 2
