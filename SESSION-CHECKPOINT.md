@@ -138,3 +138,15 @@ At the beginning of every session:
 
 - Follow-up verification: Gateway CI run 44034600885 completed successfully for test commit 4ca86da9fa7dc1343a8e9b7848ed2910dea4d263. Both the full Gateway unit-test step and Docker image build passed. Run URL: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44034600885.
 - Latest main HEAD after the checkpoint-only follow-up is d1939470b891e02826c1eef17cc7ef96cf41c01a. The successful Gateway CI is tied to the immediately preceding code/test commit 4ca86da, not the docs-only checkpoint commit.
+
+
+## Session update — 2026-11-17 (definitive rejection cleanup)
+
+- Added an integration-style regression test for a definitive Verigate 403 after the exact signed transaction has been persisted. The test was first run in CI on commit 0dffc0fb54301a36b1cb9e1422a00984863c793e and failed, reproducing the bug: the rejected payment retained encrypted signed transaction bytes.
+- Fixed gateway/app.py in commit 1ecac49c319a094b563fad6e1118e7439f2bd697: when execute() receives a deterministic HTTP error (<500), it records REJECTED and clears the persisted signed transaction. HTTP errors >=500 remain UNKNOWN_REQUIRES_RECONCILIATION and preserve bytes because Verigate consume may have succeeded despite a timeout/transport failure.
+- Added a second regression test in commit b992dc53a6b13c339198f11488b8309a9673581b proving ambiguous 502 consume outcome preserves the encrypted transaction for manual reconciliation and does not set authorization_consumed.
+- Gateway CI passed on b992dc53a6b13c339198f11488b8309a9673581b: unit tests and Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44035125830.
+- Solidity CI passed on the same commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44035125842.
+- Sandbox at /mnt/data/aevumpay-sandbox now includes the earlier Ed25519 verifier snapshot plus a focused copy of the execute failure-state policy and two tests. Full sandbox pytest result: 7 passed in 0.28s. This is an isolated policy/verifier snapshot, not a full checkout; repository Gateway CI is the authoritative full-suite result.
+- No live Verigate endpoint, Aevum RPC, deployment, or payment was used. No production secrets were accessed.
+- Current main code/test commit: b992dc53a6b13c339198f11488b8309a9673581b. Checkpoint-only commit follows.
