@@ -167,3 +167,17 @@ At the beginning of every session:
 - Solidity CI passed on the same commit. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036015013.
 - No production application code changed in this slice. No live Verigate endpoint, Aevum RPC, contract deployment or testnet payment was exercised.
 - Current scope remains mock-HTTP boundary coverage; it is not a live Verigate integration test.
+
+
+## Session update — 2026-11-17 (Verigate pre-consume failure classification)
+
+- Added regression coverage for failures before the /v1/execution/consume request: authorize timeout, authorize HTTP failure, malformed authorize JSON, and invalid issuer signature. The tests first failed on the old behavior (all were surfaced as HTTP 502).
+- Updated authorize_and_consume to track whether consume has started:
+  - Before consume starts, unexpected authorize/validation/transport failures return HTTP 424 (Failed Dependency). The execute handler treats this as a definitive pre-consume failure and clears the persisted signed transaction.
+  - Immediately before sending the consume request, the function marks the stage as potentially ambiguous. Any unexpected exception from then onward returns HTTP 502, preserving the signed transaction for reconciliation.
+  - Explicit policy DENY / identity binding mismatch and explicit consume execute=false retain their existing 403 behavior.
+- Latest code/test commit: 98d19b736f184f7c510b7f440cb3fa4003aa15ec.
+- Gateway CI passed: 26 tests passed; Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036754108.
+- Solidity CI passed. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036754086.
+- The earlier red runs are intentional TDD evidence: first the new pre-consume cases failed (3 failures), then the implementation exposed one outdated expected status; corrected tests pass on the latest commit.
+- Still not exercised: live Verigate service, live QDay RPC, deployed router, or testnet payment. This is mocked HTTP boundary coverage only.
