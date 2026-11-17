@@ -414,6 +414,31 @@ def test_authorize_and_consume_accepts_valid_allow_and_consumed_authority(monkey
     assert client.posts[1][0].endswith("/v1/execution/consume")
 
 
+
+@pytest.mark.parametrize("authorize_failure", [
+    httpx.TimeoutException("authorize timed out"),
+    RuntimeError("authorize returned HTTP 503"),
+    ValueError("malformed authorize JSON"),
+])
+def test_authorize_stage_failures_are_definitive_before_consume(monkeypatch, authorize_failure):
+    req = _verigate_test_request()
+    action = _verigate_test_action()
+    if isinstance(authorize_failure, ValueError):
+        response = _FakeVerigateResponse(authorize_failure)
+    elif isinstance(authorize_failure, RuntimeError):
+        response = _FakeVerigateResponse(error=authorize_failure)
+    else:
+        response = authorize_failure
+    client = _FakeVerigateClient([response])
+    monkeypatch.setattr(gateway_app.httpx, "Client", lambda **_kwargs: client)
+
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.authorize_and_consume(req, action)
+
+    assert exc.value.status_code == 424
+    assert len(client.posts) == 1
+
+
 def test_authorize_and_consume_rejects_deny_without_consuming(monkeypatch):
     req = _verigate_test_request()
     client = _FakeVerigateClient([
