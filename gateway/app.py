@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -40,6 +41,11 @@ TX_ENCRYPTION_KEY = os.getenv("AEVUMPAY_TX_ENCRYPTION_KEY", "")
 DB_PATH = os.getenv("AEVUMPAY_DB", "data/aevumpay-gateway.db")
 HTTP_TIMEOUT = float(os.getenv("AEVUMPAY_HTTP_TIMEOUT", "8"))
 MAX_PAYMENT_TTL = 300
+
+# The default deployment is one Uvicorn worker / one replica. Serialize the
+# executor critical section so concurrent requests cannot sign the same
+# pending account nonce before either transaction is broadcast.
+EXECUTION_LOCK = threading.Lock()
 
 ROUTER_ABI = [
     {"type": "function", "name": "executor", "stateMutability": "view", "inputs": [], "outputs": [{"type": "address"}]},
@@ -692,42 +698,46 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
     typed_data, action, amount_units, calldata, request_id = prepare_payment(req)
     store.reserve(req, amount_units)
     store.update(request_id, "AUTHORIZING")
-    prepared = None
-    def prepare_and_persist():
-        nonlocal prepared
-        prepared = preflight_transaction(req, amount_units, request_id)
-        store.set_signed_transaction(
-            request_id, prepared["transaction_hash"], prepared["raw_transaction"]
-        )
-    try:
-        authorization = authorize_and_consume(
-            req, action, preflight=prepare_and_persist,
-        )
-        store.update(request_id, "AUTHORIZED_CONSUMED")
-        result = submit_transaction(
-            req, amount_units, request_id, prepared,
-            on_broadcast=lambda tx_hash, status: store.update(request_id, status, tx_hash),
-        )
-        store.update(request_id, result["status"], result.get("transaction_hash"), result.get("detail"))
-        if result["status"] in ("CONFIRMED", "REVERTED"):
-            store.clear_signed_transaction(request_id)
-        return {
-            "request_id": request_id,
-            "intent_id": req.intent_id,
-            "authorization_id": authorization["payload"]["authorization_id"],
-            **result,
-        }
-    except HTTPException as exc:
-        status = "UNKNOWN_REQUIRES_RECONCILIATION" if exc.status_code >= 500 else "REJECTED"
-        store.update(request_id, status, detail=str(exc.detail))
-        if status == "REJECTED":
-            # A deterministic pre-consume failure or explicit Verigate denial
-            # cannot authorize broadcasting this signed transaction. Discard it.
-            store.clear_signed_transaction(request_id)
-        raise
-    except Exception as exc:
-        store.update(request_id, "UNKNOWN_REQUIRES_RECONCILIATION", detail=type(exc).__name__)
-        raise HTTPException(status_code=500, detail="payment execution interrupted; reconcile before retry") from exc
+    # Hold the lock from nonce lookup/signing through Verigate consume and
+    # broadcast. Locking only preflight would still allow two requests to sign
+    # the same pending nonce while the first waits on Verigate.
+    with EXECUTION_LOCK:
+        prepared = None
+        def prepare_and_persist():
+            nonlocal prepared
+            prepared = preflight_transaction(req, amount_units, request_id)
+            store.set_signed_transaction(
+                request_id, prepared["transaction_hash"], prepared["raw_transaction"]
+            )
+        try:
+            authorization = authorize_and_consume(
+                req, action, preflight=prepare_and_persist,
+            )
+            store.update(request_id, "AUTHORIZED_CONSUMED")
+            result = submit_transaction(
+                req, amount_units, request_id, prepared,
+                on_broadcast=lambda tx_hash, status: store.update(request_id, status, tx_hash),
+            )
+            store.update(request_id, result["status"], result.get("transaction_hash"), result.get("detail"))
+            if result["status"] in ("CONFIRMED", "REVERTED"):
+                store.clear_signed_transaction(request_id)
+            return {
+                "request_id": request_id,
+                "intent_id": req.intent_id,
+                "authorization_id": authorization["payload"]["authorization_id"],
+                **result,
+            }
+        except HTTPException as exc:
+            status = "UNKNOWN_REQUIRES_RECONCILIATION" if exc.status_code >= 500 else "REJECTED"
+            store.update(request_id, status, detail=str(exc.detail))
+            if status == "REJECTED":
+                # A deterministic pre-consume failure or explicit Verigate denial
+                # cannot authorize broadcasting this signed transaction. Discard it.
+                store.clear_signed_transaction(request_id)
+            raise
+        except Exception as exc:
+            store.update(request_id, "UNKNOWN_REQUIRES_RECONCILIATION", detail=type(exc).__name__)
+            raise HTTPException(status_code=500, detail="payment execution interrupted; reconcile before retry") from exc
 
 
 @app.post("/v1/payments/{request_id}/reconcile", dependencies=[Depends(require_gateway_key)])
