@@ -493,7 +493,7 @@ def test_authorize_and_consume_rejects_invalid_issuer_signature_before_consume(m
     with pytest.raises(gateway_app.HTTPException) as exc:
         gateway_app.authorize_and_consume(req, action)
 
-    assert exc.value.status_code == 502
+    assert exc.value.status_code == 424
     assert len(client.posts) == 1
 
 
