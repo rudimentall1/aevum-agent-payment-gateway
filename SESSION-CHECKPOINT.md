@@ -150,3 +150,20 @@ At the beginning of every session:
 - Sandbox at /mnt/data/aevumpay-sandbox now includes the earlier Ed25519 verifier snapshot plus a focused copy of the execute failure-state policy and two tests. Full sandbox pytest result: 7 passed in 0.28s. This is an isolated policy/verifier snapshot, not a full checkout; repository Gateway CI is the authoritative full-suite result.
 - No live Verigate endpoint, Aevum RPC, deployment, or payment was used. No production secrets were accessed.
 - Current main code/test commit: b992dc53a6b13c339198f11488b8309a9673581b. Checkpoint-only commit follows.
+
+
+## Session update — 2026-11-17 (Verigate HTTP boundary coverage)
+
+- Added HTTP-level tests around `authorize_and_consume` in `gateway/tests/test_gateway.py`:
+  - valid ALLOW + pinned Ed25519 authorization + consume execute=true;
+  - DENY without a consume request;
+  - identity, capability, agent and intent binding mismatches;
+  - invalid issuer signature rejected before consume;
+  - consume execute=false;
+  - consume transport failure and timeout fail closed.
+- The test additions exposed two test-fixture issues during CI (missing `httpx` import and incomplete action envelope); both were corrected. The earlier failing CI runs correspond to intermediate commits and are not the current result.
+- Latest code/test commit: `8b524fa207af6d4148abe36f4b5d0a09c4c59b7c`.
+- Gateway CI passed on that commit: all 23 Gateway tests passed and the Docker image built successfully. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036014605.
+- Solidity CI passed on the same commit. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036015013.
+- No production application code changed in this slice. No live Verigate endpoint, Aevum RPC, contract deployment or testnet payment was exercised.
+- Current scope remains mock-HTTP boundary coverage; it is not a live Verigate integration test.
