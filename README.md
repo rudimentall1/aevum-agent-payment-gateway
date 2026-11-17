@@ -5,26 +5,38 @@
 AevumPay is a non-custodial payment gateway for AI agents. It combines an external authorization decision from Verigate with deterministic on-chain payment constraints enforced by an Aevum smart contract.
 
 ## Why
+
 Agents need to make payments without receiving unrestricted wallet authority. AevumPay constrains each payment by token, recipient, exact amount, expiry and one-time request identifier. The agent cannot use the router to redirect or enlarge an approved payment.
 
 ## Execution flow
-1. Agent submits a payment request to the AevumPay gateway.
-2. Gateway constructs a canonical Verigate ActionIntent and requests executable authorization.
-3. Gateway verifies the authorization and consumes it once through Verigate.
-4. Payer signs an EIP-712 envelope binding payer, token, recipient, exact amount, request ID, deadline, chain and router.
-5. Payer approves the router to spend the required tUSD8 amount.
-6. The configured gateway executor relays the signed envelope. The router verifies the payer signature and independently enforces chain, token allowlist, recipient, amount, deadline and replay protection.
-7. Router calls ERC-20 transferFrom and emits a payment event.
+
+1. The payer requests EIP-712 typed data from the gateway for a specific payer, token, recipient, amount, request ID, deadline, chain and router.
+2. The payer signs that typed data and approves the router to spend the exact tUSD8 amount.
+3. The gateway prepares the canonical Verigate ActionIntent and exact router calldata. The agent signs the canonical ActionIntent payload; the payer signature is already bound into the calldata.
+4. The gateway verifies both signatures, checks the Aevum chain/router/token state, balance, allowance and gas, signs the exact EVM transaction, and persists its encrypted raw bytes before consuming one-time authority.
+5. The gateway requests executable authorization from Verigate, verifies the pinned Ed25519 issuer signature and exact action binding, then calls Verigate consume. It proceeds only when consume returns `execute=true`.
+6. After recording successful consumption, the gateway broadcasts the exact previously signed transaction bytes. It does not rebuild calldata, nonce or gas after consume.
+7. The gateway marks a payment CONFIRMED only after a successful receipt contains both the expected ERC-20 Transfer and AevumPay PaymentExecuted events. Ambiguous outcomes remain reconcilable by re-broadcasting only the identical signed bytes.
 
 Verigate is an existing external service dependency, not new AevumPay contest implementation. The on-chain router does not claim to verify Verigate's Ed25519 signature. It independently verifies the payer's EIP-712 payment signature and enforces payment constraints.
 
 ## Network
+
 QDay Aevum Testnet, chain ID 44005 (0xabe5). Test token tUSD8: `0x456569838f1d43009A91ebA4263147Afd7233483`, 6 decimals. See [network configuration](docs/NETWORK_CONFIG.md).
 
 ## Current status
-The EIP-712 policy router, Foundry tests, deployment script and Solidity CI are implemented. GitHub Actions has successfully compiled the contract and passed all 15 tests on commit `0ee1cd439741cd6f90807fcb09a1aaa9f90b2148`. The router has not been deployed and no AevumPay testnet transaction has been sent. See [session checkpoint](SESSION-CHECKPOINT.md) for evidence status and next steps.
+
+- EIP-712 policy router, deployment script, threat model and 15 Foundry tests are implemented. GitHub Actions compiled the contract and passed all 15 tests.
+- FastAPI gateway is implemented with typed-data, prepare, execute, status and reconciliation endpoints.
+- Gateway CI passed its unit-test suite and Docker image build on commit `3d38cfa2c186846d20e69890bf24cfafdcc016ba` (run [43856166920](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43856166920)).
+- The latest recorded Solidity CI run passed build and all 15 Foundry tests (run [43841842492](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43841842492)).
+- These CI results are tied to their recorded commits/runs; they are not a claim that the latest documentation-only HEAD has been re-run.
+- The router has not been deployed to Aevum. No AevumPay testnet payment has been sent. The gateway has not been live-integrated with Verigate.
+
+See [session checkpoint](SESSION-CHECKPOINT.md) for evidence status and next steps.
 
 ## Scope and safety
+
 - EOA is the primary execution path.
 - ERC-4337/session keys are optional and will only be claimed after a reproducible Aevum UserOperation.
 - No custodial escrow.
@@ -33,4 +45,5 @@ The EIP-712 policy router, Foundry tests, deployment script and Solidity CI are 
 - Never store private keys, API keys or tenant credentials in the repository.
 
 ## Development
-The implementation toolchain and exact commands will be pinned with the first executable contract slice. See [architecture](docs/ARCHITECTURE.md), [acceptance criteria](docs/ACCEPTANCE_CRITERIA.md), and [build plan](docs/BUILD_PLAN.md).
+
+See [architecture](docs/ARCHITECTURE.md), [API reference](docs/API.md), [acceptance criteria](docs/ACCEPTANCE_CRITERIA.md), and [build plan](docs/BUILD_PLAN.md).
