@@ -102,3 +102,17 @@ At the beginning of every session:
 6. Run authorize/verify/consume integration tests against the real Verigate instance.
 7. Execute a small tUSD8 payment on testnet; verify receipt, exact ERC-20 Transfer and PaymentExecuted logs, and reconciliation endpoint behavior.
 8. Expand gateway tests for DENY, malformed/invalid issuer signatures, consume=false, service timeouts, RPC ambiguity and process-crash recovery.
+
+
+## Session update — 2026-11-17
+
+- Verified the repository still exists and is public. Current work is on the recreated repository; it does not contain the pre-deletion Git history.
+- Latest HEAD before this session's documentation correction was `711087c18d345aa6762c26b1356aa00d8acc56b6` (checkpoint update, 2026-11-16 11:16 UTC).
+- Updated README on 2026-11-17 in commit `b0a2955ccead4fe92afc4262dc2ed954f209d997`: corrected the order of payer signing, agent signing, Verigate authorization/consume and transaction broadcast; documented the implemented Gateway and its evidence boundaries.
+- Verified GitHub Actions run `43856166920`: Gateway unit-test job and Docker image build both completed successfully. This run is associated with the gateway implementation commit `3d38cfa2c186846d20e69890bf24cfafdcc016ba`, not the latest README commit.
+- Verified GitHub Actions run `43841842492`: Foundry build and all 15 Solidity tests completed successfully. This is recorded historical CI evidence, not a local test run.
+- The GitHub connector did not return workflow runs or commit statuses for latest documentation HEAD `711087c`; do not claim that HEAD has a fresh green CI run.
+- Desktop Commander was checked again on 2026-11-17. No devices are connected, so Gensyn2 cannot be inspected from this session.
+- Current blocking dependencies remain unchanged: live Aevum RPC/token verification, a reachable self-hosted Verigate endpoint with matching identity/capability/database context, router deployment, and a live testnet payment.
+- Code review observation: the README's former sequence implied Verigate consume happened before the payer signed the EIP-712 envelope. That documentation inconsistency is fixed in `b0a2955`. No application code was changed in this session.
+- Next: connect Gensyn2 Desktop Commander; inspect Verigate process/config/database path without exposing secret values; then verify Aevum RPC and token from a network-capable host. Do not attempt deployment or payment until both dependencies are confirmed.
