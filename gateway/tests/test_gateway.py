@@ -424,7 +424,7 @@ def test_authorize_and_consume_rejects_deny_without_consuming(monkeypatch):
     monkeypatch.setattr(gateway_app.httpx, "Client", lambda **_kwargs: client)
 
     with pytest.raises(gateway_app.HTTPException) as exc:
-        gateway_app.authorize_and_consume(req, {"action_type": "payment"})
+        gateway_app.authorize_and_consume(req, _verigate_test_action())
 
     assert exc.value.status_code == 403
     assert len(client.posts) == 1
