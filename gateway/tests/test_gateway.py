@@ -213,3 +213,53 @@ def test_execution_authorization_rejects_action_fingerprint_mismatch():
     )).decode("ascii")
     with pytest.raises(ValueError, match="invalid or mismatched"):
         gateway_app.verify_execution_authorization(authorization, public_key, action)
+
+
+
+def test_definitive_verigate_rejection_discards_persisted_signed_transaction(monkeypatch, tmp_path):
+    encryption_key = Fernet.generate_key()
+    payment_store = PaymentStore(str(tmp_path / "rejected.sqlite"), encryption_key=encryption_key)
+    monkeypatch.setattr(gateway_app, "store", payment_store)
+
+    req = gateway_app.ExecuteRequest(
+        payer="0x0000000000000000000000000000000000000001",
+        recipient="0x0000000000000000000000000000000000000002",
+        amount="1.25",
+        request_id="0x" + "55" * 32,
+        deadline=1_800_000_000,
+        payer_signature="0x" + "11" * 65,
+        agent_id="agent",
+        identity_id="identity",
+        capability_id="capability",
+        intent_id="intent",
+        timestamp=1_700_000_000.0,
+        agent_signature="agent-signature",
+    )
+    action = {"action_type": "payment"}
+    monkeypatch.setattr(
+        gateway_app, "prepare_payment",
+        lambda _req: ({}, action, 1_250_000, "0x1234", req.request_id),
+    )
+    monkeypatch.setattr(
+        gateway_app, "preflight_transaction",
+        lambda *_args: {
+            "web3": object(),
+            "raw_transaction": b"signed-transaction",
+            "transaction_hash": "0x" + "66" * 32,
+        },
+    )
+
+    def reject_after_preflight(_req, _action, preflight=None):
+        preflight()
+        raise gateway_app.HTTPException(status_code=403, detail="Verigate denied")
+
+    monkeypatch.setattr(gateway_app, "authorize_and_consume", reject_after_preflight)
+
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.execute(req)
+
+    assert exc.value.status_code == 403
+    record = payment_store.get(req.request_id)
+    assert record["status"] == "REJECTED"
+    assert record["authorization_consumed"] == 0
+    assert record["raw_transaction"] is None
