@@ -181,3 +181,14 @@ At the beginning of every session:
 - Solidity CI passed. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036754086.
 - The earlier red runs are intentional TDD evidence: first the new pre-consume cases failed (3 failures), then the implementation exposed one outdated expected status; corrected tests pass on the latest commit.
 - Still not exercised: live Verigate service, live QDay RPC, deployed router, or testnet payment. This is mocked HTTP boundary coverage only.
+
+## Session update — 2026-11-17 (executor nonce concurrency)
+
+- Verified current main before this slice: `e9eefd9d30fd137b11a790ebf2385bb6c13fa226`; both Gateway and Solidity CI were green on that HEAD.
+- Added a concurrent-execution regression test in `gateway/tests/test_gateway.py`. It deliberately blocks the first payment during preflight and verifies that a second request cannot enter nonce preflight before the first request finishes the critical section.
+- The regression test failed on the unmodified implementation on commit `d62475db04ea122c6d6f684460b8e0ab1d15595f`: 1 failed, 26 passed. CI log showed the second request entered preflight while the first was unresolved, confirming the race.
+- Fixed `gateway/app.py` in commit `9e167f51ede5acd95c0365776b0cd991e5494152`: introduced an in-process execution lock held from nonce lookup/signing through Verigate consume and transaction broadcast. Locking only the preflight function would not be sufficient because the RPC pending nonce may not advance while the first transaction is waiting on Verigate.
+- Gateway CI passed on `9e167f51ede5acd95c0365776b0cd991e5494152`: 27 tests passed and Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402225.
+- Solidity CI passed on the same commit. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402131.
+- README now documents the operational constraint: one Uvicorn worker and one running replica. The lock is process-local; horizontal scaling is not safe until a shared durable nonce-reservation mechanism is implemented.
+- This is a code-path fix verified in CI, not a live-chain concurrency test. No Verigate endpoint, Aevum RPC, deployment or payment was exercised.
