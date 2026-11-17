@@ -169,23 +169,23 @@ def _signed_verigate_authorization(action):
 
 
 def test_execution_authorization_accepts_valid_pinned_ed25519_signature():
-    action = _verigate_test_action()}
+    action = {"action_type": "payment", "amount_exact": "1.250000", "metadata": {"chain_id": 44005}}
     authorization, public_key, _ = _signed_verigate_authorization(action)
 
     gateway_app.verify_execution_authorization(authorization, public_key, action)
 
 
 def test_execution_authorization_rejects_action_substitution():
-    action = _verigate_test_action()
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
     authorization, public_key, _ = _signed_verigate_authorization(action)
-    substituted_action = _verigate_test_action()
+    substituted_action = {"action_type": "payment", "amount_exact": "9.990000"}
 
     with pytest.raises(ValueError, match="invalid or mismatched"):
         gateway_app.verify_execution_authorization(authorization, public_key, substituted_action)
 
 
 def test_execution_authorization_rejects_tampered_signature():
-    action = _verigate_test_action()
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
     authorization, public_key, _ = _signed_verigate_authorization(action)
     signature = bytearray(base64.b64decode(authorization["signature"]))
     signature[0] ^= 0x01
@@ -196,7 +196,7 @@ def test_execution_authorization_rejects_tampered_signature():
 
 
 def test_execution_authorization_rejects_wrong_algorithm():
-    action = _verigate_test_action()
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
     authorization, public_key, _ = _signed_verigate_authorization(action)
     authorization["algorithm"] = "RSA"
 
@@ -205,7 +205,7 @@ def test_execution_authorization_rejects_wrong_algorithm():
 
 
 def test_execution_authorization_rejects_action_fingerprint_mismatch():
-    action = _verigate_test_action()
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
     authorization, public_key, private_key = _signed_verigate_authorization(action)
     authorization["payload"]["action_sha256"] = "00" * 32
     payload = authorization["payload"]
