@@ -1,6 +1,6 @@
 # PostgreSQL Ledger and Nonce Coordination
 
-Status: implementation design; not yet implemented or runtime-verified.
+Status: partial implementation. The standalone nonce reservation primitive is implemented and CI-tested against PostgreSQL 16. The shared payment ledger, transactional payment-state transitions and execution integration are not implemented. PostgreSQL mode is not production-ready and must not be used to enable multiple Gateway replicas.
 
 ## Goal
 
@@ -16,7 +16,19 @@ Allow more than one Gateway process to share payment state without allowing two 
 6. A nonce reservation is not reusable until the system has authoritative evidence that the transaction was not broadcast and cannot later be broadcast, or that the transaction has reached a terminal on-chain outcome.
 7. No replica may enter the executor critical section without holding the shared database coordination primitive.
 
-## PostgreSQL schema
+## Implemented slice: nonce reservation
+
+`gateway/postgres_nonce.py` currently provides an isolated `PostgresNonceStore`:
+- PostgreSQL 16 compatible, using psycopg v3.
+- Transaction-scoped advisory lock keyed by chain ID and normalized executor address.
+- Durable unique constraint on (chain_id, executor_address, nonce).
+- Globally unique request ID constraint.
+- Conservative allocation from max(pending_nonce, highest_reserved_nonce + 1); abandoned reservations are not silently recycled.
+- The primitive is not imported or called by `gateway/app.py` and does not replace the SQLite payment store.
+
+CI uses a real PostgreSQL 16 service. The integration tests spawn six independent processes to reserve nonces concurrently, reject duplicate request IDs, and verify a reservation remains allocated after constructing a new store instance. Verified run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44054246429 (32 Gateway tests passed; Docker image build succeeded).
+
+## Remaining PostgreSQL schema
 
 ### payments
 
@@ -32,17 +44,13 @@ Use BYTEA for encrypted raw_transaction and TIMESTAMPTZ for timestamps. Keep amo
 
 ### nonce_reservations
 
-- chain_id BIGINT NOT NULL
-- executor_address TEXT NOT NULL
-- nonce BIGINT NOT NULL
+The initial primitive currently has chain_id, executor_address, nonce, request_id, state and timestamps. The complete ledger still needs:
 - request_id TEXT NOT NULL UNIQUE REFERENCES payments(request_id)
 - tx_hash TEXT
-- state TEXT NOT NULL
-- created_at TIMESTAMPTZ NOT NULL
-- updated_at TIMESTAMPTZ NOT NULL
-- PRIMARY KEY (chain_id, executor_address, nonce)
+- explicit state transitions for RESERVED, SIGNED, AUTHORIZATION_CONSUMED, BROADCAST, CONFIRMED, REVERTED and MANUAL_REVIEW
+- durable association between reservation, payment row and exact signed transaction
 
-States are RESERVED, SIGNED, AUTHORIZATION_CONSUMED, BROADCAST, CONFIRMED, REVERTED, and MANUAL_REVIEW. State transitions must be explicit and monotonic; ambiguous states are not automatically recycled.
+The schema must be migrated carefully from the current primitive table without dropping or recycling existing reservations.
 
 ## Execution protocol
 
@@ -91,4 +99,4 @@ Run against a real PostgreSQL service in CI, not a mocked SQL adapter:
 
 ## Rollout gate
 
-PostgreSQL mode remains experimental and single-replica until the above tests pass. Multi-replica operation is not enabled by merely adding a PostgreSQL connection string.
+PostgreSQL mode remains experimental and single-replica until the complete shared payment ledger, transactional state transitions and crash-recovery acceptance tests pass. Multi-replica operation is not enabled by merely adding a PostgreSQL connection string.
