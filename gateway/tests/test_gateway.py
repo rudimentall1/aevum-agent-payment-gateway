@@ -312,3 +312,183 @@ def test_ambiguous_verigate_failure_preserves_signed_transaction_for_reconciliat
     assert record["status"] == "UNKNOWN_REQUIRES_RECONCILIATION"
     assert record["authorization_consumed"] == 0
     assert Fernet(encryption_key).decrypt(record["raw_transaction"]) == b"signed-transaction"
+
+
+class _FakeVerigateResponse:
+    def __init__(self, body=None, error=None):
+        self.body = body
+        self.error = error
+
+    def raise_for_status(self):
+        if self.error:
+            raise self.error
+
+    def json(self):
+        if isinstance(self.body, Exception):
+            raise self.body
+        return self.body
+
+
+class _FakeVerigateClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.posts = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def post(self, url, **kwargs):
+        self.posts.append((url, kwargs))
+        if not self.responses:
+            raise AssertionError("unexpected Verigate HTTP request")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def _verigate_test_request():
+    return gateway_app.ExecuteRequest(
+        payer="0x0000000000000000000000000000000000000001",
+        recipient="0x0000000000000000000000000000000000000002",
+        amount="1.25",
+        request_id="0x" + "99" * 32,
+        deadline=1_800_000_000,
+        payer_signature="0x" + "11" * 65,
+        agent_id="agent",
+        identity_id="identity",
+        capability_id="capability",
+        intent_id="intent",
+        timestamp=1_700_000_000.0,
+        agent_signature="agent-signature",
+    )
+
+
+def _verigate_allow_body(action):
+    authorization, public_key, _ = _signed_verigate_authorization(action)
+    return {
+        "decision_receipt": {"payload": {"decision": {"decision": "ALLOW"}}},
+        "execution_authorization": authorization,
+    }, public_key
+
+
+def test_authorize_and_consume_accepts_valid_allow_and_consumed_authority(monkeypatch):
+    req = _verigate_test_request()
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    body, public_key = _verigate_allow_body(action)
+    client = _FakeVerigateClient([
+        _FakeVerigateResponse(body),
+        _FakeVerigateResponse({"execute": True}),
+    ])
+    monkeypatch.setattr(gateway_app.httpx, "Client", lambda **_kwargs: client)
+    monkeypatch.setattr(gateway_app, "load_issuer_key", lambda: public_key)
+    preflight_calls = []
+
+    result = gateway_app.authorize_and_consume(
+        req, action, preflight=lambda: preflight_calls.append(True)
+    )
+
+    assert result == body["execution_authorization"]
+    assert preflight_calls == [True]
+    assert len(client.posts) == 2
+    assert client.posts[1][0].endswith("/v1/execution/consume")
+
+
+def test_authorize_and_consume_rejects_deny_without_consuming(monkeypatch):
+    req = _verigate_test_request()
+    client = _FakeVerigateClient([
+        _FakeVerigateResponse({
+            "decision_receipt": {"payload": {"decision": {"decision": "DENY"}}},
+        }),
+    ])
+    monkeypatch.setattr(gateway_app.httpx, "Client", lambda **_kwargs: client)
+
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.authorize_and_consume(req, {"action_type": "payment"})
+
+    assert exc.value.status_code == 403
+    assert len(client.posts) == 1
+
+
+@pytest.mark.parametrize("field", ["identity_id", "capability_id", "agent_id", "intent_id"])
+def test_authorize_and_consume_rejects_mismatched_authority_binding(monkeypatch, field):
+    req = _verigate_test_request()
+    action = {"action_type": "payment"}
+    body, public_key = _verigate_allow_body(action)
+    body["execution_authorization"]["payload"][field] = "attacker-controlled-value"
+    # Re-sign the altered payload so this test isolates the explicit request binding check.
+    private_key = Ed25519PrivateKey.generate()
+    body["execution_authorization"], public_key, _ = _signed_verigate_authorization(action)
+    body["execution_authorization"]["payload"][field] = "attacker-controlled-value"
+    payload = body["execution_authorization"]["payload"]
+    payload_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body["execution_authorization"]["signature"] = base64.b64encode(private_key.sign(payload_bytes)).decode("ascii")
+    # The binding check must reject before signature verification or consume.
+    client = _FakeVerigateClient([_FakeVerigateResponse(body)])
+    monkeypatch.setattr(gateway_app.httpx, "Client", lambda **_kwargs: client)
+    monkeypatch.setattr(gateway_app, "load_issuer_key", lambda: public_key)
+
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.authorize_and_consume(req, action)
+
+    assert exc.value.status_code == 403
+    assert len(client.posts) == 1
+
+
+def test_authorize_and_consume_rejects_invalid_issuer_signature_before_consume(monkeypatch):
+    req = _verigate_test_request()
+    action = {"action_type": "payment"}
+    body, public_key = _verigate_allow_body(action)
+    body["execution_authorization"]["signature"] = base64.b64encode(b"\x00" * 64).decode("ascii")
+    client = _FakeVerigateClient([_FakeVerigateResponse(body)])
+    monkeypatch.setattr(gateway_app.httpx, "Client", lambda **_kwargs: client)
+    monkeypatch.setattr(gateway_app, "load_issuer_key", lambda: public_key)
+
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.authorize_and_consume(req, action)
+
+    assert exc.value.status_code == 502
+    assert len(client.posts) == 1
+
+
+def test_authorize_and_consume_rejects_consume_false(monkeypatch):
+    req = _verigate_test_request()
+    action = {"action_type": "payment"}
+    body, public_key = _verigate_allow_body(action)
+    client = _FakeVerigateClient([
+        _FakeVerigateResponse(body),
+        _FakeVerigateResponse({"execute": False}),
+    ])
+    monkeypatch.setattr(gateway_app.httpx, "Client", lambda **_kwargs: client)
+    monkeypatch.setattr(gateway_app, "load_issuer_key", lambda: public_key)
+
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.authorize_and_consume(req, action)
+
+    assert exc.value.status_code == 403
+    assert len(client.posts) == 2
+
+
+@pytest.mark.parametrize("failure", [
+    RuntimeError("upstream HTTP failure"),
+    httpx.TimeoutException("upstream timeout"),
+])
+def test_authorize_and_consume_fails_closed_on_consume_transport_error(monkeypatch, failure):
+    req = _verigate_test_request()
+    action = {"action_type": "payment"}
+    body, public_key = _verigate_allow_body(action)
+    client = _FakeVerigateClient([
+        _FakeVerigateResponse(body),
+        failure,
+    ])
+    monkeypatch.setattr(gateway_app.httpx, "Client", lambda **_kwargs: client)
+    monkeypatch.setattr(gateway_app, "load_issuer_key", lambda: public_key)
+
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.authorize_and_consume(req, action)
+
+    assert exc.value.status_code == 502
+    assert len(client.posts) == 2
