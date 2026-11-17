@@ -164,12 +164,12 @@ def _signed_verigate_authorization(action):
         "payload": payload,
         "signature": base64.b64encode(signature).decode("ascii"),
     }
-    return authorization, private_key.public_key()
+    return authorization, private_key.public_key(), private_key
 
 
 def test_execution_authorization_accepts_valid_pinned_ed25519_signature():
     action = {"action_type": "payment", "amount_exact": "1.250000", "metadata": {"chain_id": 44005}}
-    authorization, public_key = _signed_verigate_authorization(action)
+    authorization, public_key, _ = _signed_verigate_authorization(action)
 
     gateway_app.verify_execution_authorization(authorization, public_key, action)
 
@@ -205,12 +205,11 @@ def test_execution_authorization_rejects_wrong_algorithm():
 
 def test_execution_authorization_rejects_action_fingerprint_mismatch():
     action = {"action_type": "payment", "amount_exact": "1.250000"}
-    authorization, public_key = _signed_verigate_authorization(action)
+    authorization, public_key, private_key = _signed_verigate_authorization(action)
     authorization["payload"]["action_sha256"] = "00" * 32
     payload = authorization["payload"]
-    # Re-sign the altered payload to isolate the fingerprint check from signature validation.
-    private_key = Ed25519PrivateKey.generate()
-    # A different key cannot validate against the original public key, so this case
-    # intentionally verifies that an altered fingerprint is rejected before signature use.
+    authorization["signature"] = base64.b64encode(private_key.sign(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    )).decode("ascii")
     with pytest.raises(ValueError, match="invalid or mismatched"):
         gateway_app.verify_execution_authorization(authorization, public_key, action)
