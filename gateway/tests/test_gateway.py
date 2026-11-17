@@ -263,3 +263,52 @@ def test_definitive_verigate_rejection_discards_persisted_signed_transaction(mon
     assert record["status"] == "REJECTED"
     assert record["authorization_consumed"] == 0
     assert record["raw_transaction"] is None
+
+
+
+def test_ambiguous_verigate_failure_preserves_signed_transaction_for_reconciliation(monkeypatch, tmp_path):
+    encryption_key = Fernet.generate_key()
+    payment_store = PaymentStore(str(tmp_path / "ambiguous.sqlite"), encryption_key=encryption_key)
+    monkeypatch.setattr(gateway_app, "store", payment_store)
+
+    req = gateway_app.ExecuteRequest(
+        payer="0x0000000000000000000000000000000000000001",
+        recipient="0x0000000000000000000000000000000000000002",
+        amount="1.25",
+        request_id="0x" + "77" * 32,
+        deadline=1_800_000_000,
+        payer_signature="0x" + "11" * 65,
+        agent_id="agent",
+        identity_id="identity",
+        capability_id="capability",
+        intent_id="intent",
+        timestamp=1_700_000_000.0,
+        agent_signature="agent-signature",
+    )
+    monkeypatch.setattr(
+        gateway_app, "prepare_payment",
+        lambda _req: ({}, {"action_type": "payment"}, 1_250_000, "0x1234", req.request_id),
+    )
+    monkeypatch.setattr(
+        gateway_app, "preflight_transaction",
+        lambda *_args: {
+            "web3": object(),
+            "raw_transaction": b"signed-transaction",
+            "transaction_hash": "0x" + "88" * 32,
+        },
+    )
+
+    def timeout_after_consume_request(_req, _action, preflight=None):
+        preflight()
+        raise gateway_app.HTTPException(status_code=502, detail="consume outcome unknown")
+
+    monkeypatch.setattr(gateway_app, "authorize_and_consume", timeout_after_consume_request)
+
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.execute(req)
+
+    assert exc.value.status_code == 502
+    record = payment_store.get(req.request_id)
+    assert record["status"] == "UNKNOWN_REQUIRES_RECONCILIATION"
+    assert record["authorization_consumed"] == 0
+    assert Fernet(encryption_key).decrypt(record["raw_transaction"]) == b"signed-transaction"
