@@ -506,6 +506,7 @@ def preflight_transaction(req: ExecuteRequest, amount_units: int, request_id: st
 
 
 def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any], preflight=None) -> dict[str, Any]:
+    consume_started = False
     try:
         with httpx.Client(timeout=HTTP_TIMEOUT) as client:
             response = client.post(
@@ -552,6 +553,9 @@ def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any], preflight
             verify_execution_authorization(authorization, load_issuer_key(), action)
             if preflight is not None:
                 preflight()
+            # From this point onward the consume request may have reached Verigate,
+            # even if the client times out before receiving its response.
+            consume_started = True
             consume = client.post(
                 f"{VERIGATE_URL}/v1/execution/consume",
                 headers={
@@ -568,7 +572,13 @@ def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any], preflight
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="Verigate authorization/consume failed closed") from exc
+        # Before consume starts, no execution authority can have been consumed;
+        # the caller may safely discard the persisted signed transaction.
+        # Once consume starts, preserve it for reconciliation because the outcome
+        # may be ambiguous after a timeout or lost response.
+        status_code = 502 if consume_started else 424
+        detail = "Verigate consume outcome unknown" if consume_started else "Verigate authorization failed before consume"
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 def submit_transaction(
