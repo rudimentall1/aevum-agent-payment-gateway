@@ -672,6 +672,10 @@ def test_reconcile_after_restart_rebroadcasts_identical_bytes_and_confirms(monke
             return True
 
         @staticmethod
+        def keccak(value):
+            return Web3.keccak(value)
+
+        @staticmethod
         def to_bytes(hexstr):
             return bytes.fromhex(hexstr[2:])
 
