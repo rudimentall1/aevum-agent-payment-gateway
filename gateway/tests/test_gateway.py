@@ -652,7 +652,11 @@ def test_reconcile_after_restart_rebroadcasts_identical_bytes_and_confirms(monke
 
         def send_raw_transaction(self, transaction):
             self.broadcasts.append(bytes(transaction))
-            return bytes.fromhex(tx_hash[2:])
+            class TxHash:
+                def hex(self):
+                    return tx_hash
+
+            return TxHash()
 
         def wait_for_transaction_receipt(self, _tx_hash, timeout):
             assert timeout >= 60
