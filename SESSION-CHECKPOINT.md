@@ -116,3 +116,22 @@ At the beginning of every session:
 - Current blocking dependencies remain unchanged: live Aevum RPC/token verification, a reachable self-hosted Verigate endpoint with matching identity/capability/database context, router deployment, and a live testnet payment.
 - Code review observation: the README's former sequence implied Verigate consume happened before the payer signed the EIP-712 envelope. That documentation inconsistency is fixed in `b0a2955`. No application code was changed in this session.
 - Next: connect Gensyn2 Desktop Commander; inspect Verigate process/config/database path without exposing secret values; then verify Aevum RPC and token from a network-capable host. Do not attempt deployment or payment until both dependencies are confirmed.
+
+
+## Session update — 2026-11-17 (Verigate authorization test coverage)
+
+- Current main HEAD after this work: 4ca86da9fa7dc1343a8e9b7848ed2910dea4d263.
+- Added five focused tests to gateway/tests/test_gateway.py for the existing verify_execution_authorization boundary:
+  - accepts a valid Ed25519 authorization signed by the pinned public key;
+  - rejects an action/transaction substitution;
+  - rejects a modified signature;
+  - rejects an unsupported signature algorithm;
+  - rejects an action fingerprint mismatch even when the altered payload itself has a valid signature.
+- Test changes are committed directly to main in:
+  - 0eeca3a4240e16cd4b467b8d493c01135e641a69 (initial test addition);
+  - c6b19472f3058f6b923ca9d773548151e762fcfa (fingerprint test refinement);
+  - 4ca86da9fa7dc1343a8e9b7848ed2910dea4d263 (corrected helper unpacking).
+- Sandbox worktree at /mnt/data/aevumpay-sandbox contains a focused snapshot of the verifier and its five tests. The isolated sandbox test run passed: 5 passed in 0.20s. This is not a full repository checkout and is not a substitute for the repository's full Gateway CI.
+- The sandbox Python environment lacks web3, eth-account, and eth-abi, so the complete gateway/tests suite could not be run locally in this runtime. GitHub Actions Gateway CI was triggered for HEAD 4ca86da and was still in progress at the time of this checkpoint update: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44034600885.
+- Solidity CI for the same HEAD completed successfully: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44034600960.
+- No production code was changed. No Verigate endpoint, QDay RPC, contract deployment, or live payment was exercised.
