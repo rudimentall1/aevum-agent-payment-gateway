@@ -601,3 +601,84 @@ def test_payment_execution_serializes_nonce_preflight_across_requests(monkeypatc
         second_future.result(timeout=3)
 
     assert preflight_calls == 2
+
+
+def _crash_recovery_store(tmp_path, request_id, encryption_key):
+    store = PaymentStore(str(tmp_path / "crash-recovery.sqlite"), encryption_key=encryption_key)
+    req = _verigate_test_request().model_copy(update={"request_id": request_id})
+    store.reserve(req, 1_250_000)
+    raw_tx = bytes.fromhex("02" + "ab" * 40)
+    tx_hash = Web3.keccak(raw_tx).hex()
+    store.set_signed_transaction(request_id, tx_hash, raw_tx)
+    return store, raw_tx, tx_hash
+
+
+def test_reconcile_refuses_automatic_rebroadcast_after_consume_before_ledger_marker(monkeypatch, tmp_path):
+    encryption_key = Fernet.generate_key()
+    request_id = "0x" + "b1" * 32
+    payment_store, raw_tx, _tx_hash = _crash_recovery_store(tmp_path, request_id, encryption_key)
+    # Simulate process death after Verigate may have consumed authority but
+    # before SQLite durably records authorization_consumed=1.
+    monkeypatch.setattr(gateway_app, "store", payment_store)
+    rpc_attempts = []
+    monkeypatch.setattr(gateway_app, "Web3", lambda *_args, **_kwargs: rpc_attempts.append(True))
+
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.reconcile_payment(request_id)
+
+    assert exc.value.status_code == 409
+    assert "manual authorization reconciliation" in exc.value.detail
+    assert rpc_attempts == []
+    record = PaymentStore(payment_store.path, encryption_key=encryption_key).get(request_id)
+    assert Fernet(encryption_key).decrypt(record["raw_transaction"]) == raw_tx
+    assert record["authorization_consumed"] == 0
+
+
+def test_reconcile_after_restart_rebroadcasts_identical_bytes_and_confirms(monkeypatch, tmp_path):
+    encryption_key = Fernet.generate_key()
+    request_id = "0x" + "b2" * 32
+    original_store, raw_tx, tx_hash = _crash_recovery_store(tmp_path, request_id, encryption_key)
+    original_store.update(request_id, "AUTHORIZED_CONSUMED")
+
+    # A new PaymentStore instance represents a fresh process after a crash.
+    restarted_store = PaymentStore(original_store.path, encryption_key=encryption_key)
+    monkeypatch.setattr(gateway_app, "store", restarted_store)
+
+    class FakeEth:
+        chain_id = gateway_app.CHAIN_ID
+
+        def __init__(self):
+            self.broadcasts = []
+
+        def send_raw_transaction(self, transaction):
+            self.broadcasts.append(bytes(transaction))
+            return bytes.fromhex(tx_hash[2:])
+
+        def wait_for_transaction_receipt(self, _tx_hash, timeout):
+            assert timeout >= 60
+            return type("Receipt", (), {"status": 1, "logs": []})()
+
+    fake_eth = FakeEth()
+
+    class FakeWeb3:
+        def __init__(self, *_args, **_kwargs):
+            self.eth = fake_eth
+
+        def is_connected(self):
+            return True
+
+        @staticmethod
+        def to_bytes(hexstr):
+            return bytes.fromhex(hexstr[2:])
+
+    monkeypatch.setattr(gateway_app, "Web3", FakeWeb3)
+    monkeypatch.setattr(gateway_app, "verify_payment_events", lambda *_args: True)
+
+    result = gateway_app.reconcile_payment(request_id)
+
+    assert fake_eth.broadcasts == [raw_tx]
+    assert result["status"] == "CONFIRMED"
+    assert result["tx_hash"] == tx_hash
+    record = restarted_store.get(request_id)
+    assert record["authorization_consumed"] == 1
+    assert record["raw_transaction"] is None
