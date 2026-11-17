@@ -29,7 +29,8 @@ QDay Aevum Testnet, chain ID 44005 (0xabe5). Test token tUSD8: `0x456569838f1d43
 - EIP-712 policy router, deployment script, threat model and 15 Foundry tests are implemented. GitHub Actions compiled the contract and passed all 15 tests.
 - FastAPI gateway is implemented with typed-data, prepare, execute, status and reconciliation endpoints.
 - Gateway CI passed its unit-test suite and Docker image build on commit `3d38cfa2c186846d20e69890bf24cfafdcc016ba` (run [43856166920](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43856166920)).
-- The latest recorded Solidity CI run passed build and all 15 Foundry tests (run [43841842492](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43841842492)).
+- Gateway CI passed all 27 tests and built the Docker image after executor nonce serialization (run [44037402225](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402225)).
+- Solidity CI passed on the same code commit (run [44037402131](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402131)).
 - These CI results are tied to their recorded commits/runs; they are not a claim that the latest documentation-only HEAD has been re-run.
 - The router has not been deployed to Aevum. No AevumPay testnet payment has been sent. The gateway has not been live-integrated with Verigate.
 
@@ -42,6 +43,7 @@ See [session checkpoint](SESSION-CHECKPOINT.md) for evidence status and next ste
 - No custodial escrow.
 - No float-based token amounts.
 - Fail closed when authorization, signature verification, consume, or chain checks fail.
+- The gateway currently requires one Uvicorn worker and one running replica. An in-process execution lock serializes nonce lookup/signing through broadcast; horizontal scaling requires a shared, durable nonce reservation mechanism.
 - Never store private keys, API keys or tenant credentials in the repository.
 
 ## Development
