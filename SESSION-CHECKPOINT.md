@@ -67,22 +67,24 @@ AevumPay is a QDay Aevum testnet payment gateway. It uses an external Verigate a
 - AevumPay implementation is merged to `main`: EIP-712 policy router, 15 Foundry tests, deployment script, threat model and Solidity CI workflow.
 - GitHub Actions on the merged implementation branch completed `forge build --sizes` successfully and all 15 Foundry tests passed (run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43840838263).
 - PR #2 was mergeable/clean and merged by squash. No deployment or live transaction is claimed.
-- AevumPay contract: not deployed.
-- Foundry coverage includes executor restrictions, signature tampering, replay, expiry, unsupported token, wrong chain, zero amount, malformed signature, failed-transfer rollback, no-return ERC-20 compatibility and recipient restrictions. GitHub Actions executed and passed all 15 tests. Tests have not been run locally in this runtime.
-- Solidity CI runs `forge build --sizes` and `forge test -vvv` on pull requests and pushes to `main` and `feat/**`. Latest main run passed: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43841842492.
-- Initial FastAPI gateway is implemented under `gateway/`: `/v1/payments/typed-data`, `/v1/payments/prepare`, `/v1/payments/execute`, `/v1/payments/{request_id}` and `/health`. It derives calldata, enforces decimal-string amounts, verifies payer EIP-712 signatures and pinned Verigate Ed25519 execution authorizations, calls Verigate authorize/consume, submits the transaction and records payment status in SQLite.
+- Contract is not deployed.
+- Foundry coverage includes executor restrictions, signature tampering, replay, expiry, unsupported token, wrong chain, zero amount, malformed signature, failed-transfer rollback, no-return ERC-20 compatibility and recipient restrictions. Tests have not been run locally in this runtime.
+- Solidity CI runs `forge build --sizes` and `forge test -vvv` on pull requests and pushes to `main` and `feat/**`.
+- Initial FastAPI gateway is implemented under `gateway/`: typed-data, prepare, execute, status and health endpoints. It derives calldata, enforces decimal-string amounts, verifies payer EIP-712 signatures and pinned Verigate Ed25519 execution authorizations, calls Verigate authorize/consume, submits the transaction and records payment status in SQLite.
 - Gateway verifies the exact ERC-20 Transfer and PaymentExecuted events before marking a payment CONFIRMED. It performs chain, executor, pause, token, balance, allowance and gas preflight, signs the exact transaction before Verigate consume, and does not rebuild nonce/gas/calldata after consume.
 - Signed raw transaction bytes are encrypted in SQLite using Fernet and the separately configured `AEVUMPAY_TX_ENCRYPTION_KEY`; public status responses never return the raw bytes.
 - Ledger records `SIGNED_AWAITING_CONSUME` before the one-time Verigate consume. Only after consume returns `execute=true` does it durably set `authorization_consumed=1`, then broadcast the exact signed bytes.
-- `POST /v1/payments/{request_id}/reconcile` was added. It re-broadcasts only the identical stored signed bytes and verifies the receipt/events, and only when the ledger durably records successful consume. If a crash occurs after Verigate consumed but before that marker is written, automated recovery refuses to proceed; manual Verigate reconciliation is required.
-- Gateway CI passed the earlier 5-test suite and built the Docker image on commit `47dfc9922f35a6b428ab4da92fea8f3c96f5768d`: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43842350154.
-- After exact signed-transaction persistence, encryption and reconciliation changes, Gateway CI passed its unit-test step on commit `3d38cfa2c186846d20e69890bf24cfafdcc016ba`; Docker image build was still running when last checked: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43856166920. The latest documentation commit has a new CI run queued; do not call the latest HEAD fully green until it completes.
-- Solidity CI also passed on that commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43842350189.
+- `POST /v1/payments/{request_id}/reconcile` re-broadcasts only the identical stored signed bytes and verifies the receipt/events, and only when the ledger durably records successful consume. If a crash occurs after Verigate consumed but before that marker is written, automated recovery refuses to proceed; manual Verigate reconciliation is required.
+- Gateway CI passed on commit `b992dc53a6b13c339198f11488b8309a9673581b`: unit tests and Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44035125830.
+- Later Gateway CI passed on commit `8b524fa207af6d4148abe36f4b5d0a09c4c59b7c`: 23 Gateway tests and Docker build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036014605.
+- Gateway CI passed on commit `98d19b736f184f7c510b7f440cb3fa4003aa15ec`: 26 tests and Docker build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036754108.
+- Gateway CI passed on commit `9e167f51ede5acd95c0365776b0cd991e5494152`: 27 tests and Docker build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402225.
+- Gateway CI passed on commit `c15c28cf3299f40f02c559af0464fb4e0e66e33e`: 29 tests and Docker build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44048575495.
+- No live Verigate endpoint, QDay RPC, deployed router or payment has been exercised.
 - A non-root Dockerfile, Compose service, `.env.example` and runtime setup guide are present. Docker image build is CI-verified; Compose has not been started with live credentials.
-- Gateway is not yet live-integrated: no Verigate URL, API key, tenant, issuer public key, router address or executor key has been configured. No Aevum testnet deployment or payment has occurred.
-- Verigate live integration: not configured or tested.
+- Gateway is not yet live-integrated: no Verigate URL, API key, tenant, issuer public key, router address or executor key has been configured.
 - No testnet transaction has been sent by AevumPay.
-- Gensyn2 Desktop Commander connection was unavailable in the previous session. No secrets, API keys or private keys are recorded here.
+- No production secrets, API keys or private keys are recorded here.
 
 ## Session operating rule
 At the beginning of every session:
@@ -94,116 +96,25 @@ At the beginning of every session:
 6. Never claim work or external verification that did not occur.
 
 ## Next actions
-1. Verify the latest `main` Gateway CI and Docker image build; current latest-docs commit run is queued.
-2. Verify Aevum RPC `eth_chainId`, `eth_blockNumber`, tUSD8 bytecode and decimals from a network-capable host; this execution environment cannot resolve the RPC hostname.
+1. Finish the PostgreSQL payment ledger and transactionally persist payment state, encrypted raw transaction bytes, authorization-consumed marker and nonce reservation before enabling shared execution.
+2. Verify Aevum RPC `eth_chainId`, `eth_blockNumber`, tUSD8 bytecode and decimals from a network-capable host.
 3. Confirm the actual self-hosted Verigate endpoint, API key, tenant, issuer public key and exact tenant DB path; provision the identity and capability against that running instance.
 4. Deploy the router to Aevum testnet using privately configured deployer values; record contract address and deployment receipt.
 5. Populate `.env` and the pinned issuer public-key file privately; launch Compose only after router and Verigate endpoint are verified.
 6. Run authorize/verify/consume integration tests against the real Verigate instance.
 7. Execute a small tUSD8 payment on testnet; verify receipt, exact ERC-20 Transfer and PaymentExecuted logs, and reconciliation endpoint behavior.
-8. Expand gateway tests for DENY, malformed/invalid issuer signatures, consume=false, service timeouts, RPC ambiguity and process-crash recovery.
+8. Do not enable multiple workers or replicas until the complete PostgreSQL ledger and crash-recovery acceptance tests pass.
 
 
-## Session update — 2026-11-17
+## Session update — 2026-11-17 (PostgreSQL nonce reservation primitive)
 
-- Verified the repository still exists and is public. Current work is on the recreated repository; it does not contain the pre-deletion Git history.
-- Latest HEAD before this session's documentation correction was `711087c18d345aa6762c26b1356aa00d8acc56b6` (checkpoint update, 2026-11-16 11:16 UTC).
-- Updated README on 2026-11-17 in commit `b0a2955ccead4fe92afc4262dc2ed954f209d997`: corrected the order of payer signing, agent signing, Verigate authorization/consume and transaction broadcast; documented the implemented Gateway and its evidence boundaries.
-- Verified GitHub Actions run `43856166920`: Gateway unit-test job and Docker image build both completed successfully. This run is associated with the gateway implementation commit `3d38cfa2c186846d20e69890bf24cfafdcc016ba`, not the latest README commit.
-- Verified GitHub Actions run `43841842492`: Foundry build and all 15 Solidity tests completed successfully. This is recorded historical CI evidence, not a local test run.
-- The GitHub connector did not return workflow runs or commit statuses for latest documentation HEAD `711087c`; do not claim that HEAD has a fresh green CI run.
-- Desktop Commander was checked again on 2026-11-17. No devices are connected, so Gensyn2 cannot be inspected from this session.
-- Current blocking dependencies remain unchanged: live Aevum RPC/token verification, a reachable self-hosted Verigate endpoint with matching identity/capability/database context, router deployment, and a live testnet payment.
-- Code review observation: the README's former sequence implied Verigate consume happened before the payer signed the EIP-712 envelope. That documentation inconsistency is fixed in `b0a2955`. No application code was changed in this session.
-- Next: connect Gensyn2 Desktop Commander; inspect Verigate process/config/database path without exposing secret values; then verify Aevum RPC and token from a network-capable host. Do not attempt deployment or payment until both dependencies are confirmed.
-
-
-## Session update — 2026-11-17 (Verigate authorization test coverage)
-
-- Current main HEAD after this work: 4ca86da9fa7dc1343a8e9b7848ed2910dea4d263.
-- Added five focused tests to gateway/tests/test_gateway.py for the existing verify_execution_authorization boundary:
-  - accepts a valid Ed25519 authorization signed by the pinned public key;
-  - rejects an action/transaction substitution;
-  - rejects a modified signature;
-  - rejects an unsupported signature algorithm;
-  - rejects an action fingerprint mismatch even when the altered payload itself has a valid signature.
-- Test changes are committed directly to main in:
-  - 0eeca3a4240e16cd4b467b8d493c01135e641a69 (initial test addition);
-  - c6b19472f3058f6b923ca9d773548151e762fcfa (fingerprint test refinement);
-  - 4ca86da9fa7dc1343a8e9b7848ed2910dea4d263 (corrected helper unpacking).
-- Sandbox worktree at /mnt/data/aevumpay-sandbox contains a focused snapshot of the verifier and its five tests. The isolated sandbox test run passed: 5 passed in 0.20s. This is not a full repository checkout and is not a substitute for the repository's full Gateway CI.
-- The sandbox Python environment lacks web3, eth-account, and eth-abi, so the complete gateway/tests suite could not be run locally in this runtime. GitHub Actions Gateway CI was triggered for HEAD 4ca86da and was still in progress at the time of this checkpoint update: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44034600885.
-- Solidity CI for the same HEAD completed successfully: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44034600960.
-- No production code was changed. No Verigate endpoint, QDay RPC, contract deployment, or live payment was exercised.
-
-- Follow-up verification: Gateway CI run 44034600885 completed successfully for test commit 4ca86da9fa7dc1343a8e9b7848ed2910dea4d263. Both the full Gateway unit-test step and Docker image build passed. Run URL: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44034600885.
-- Latest main HEAD after the checkpoint-only follow-up is d1939470b891e02826c1eef17cc7ef96cf41c01a. The successful Gateway CI is tied to the immediately preceding code/test commit 4ca86da, not the docs-only checkpoint commit.
-
-
-## Session update — 2026-11-17 (definitive rejection cleanup)
-
-- Added an integration-style regression test for a definitive Verigate 403 after the exact signed transaction has been persisted. The test was first run in CI on commit 0dffc0fb54301a36b1cb9e1422a00984863c793e and failed, reproducing the bug: the rejected payment retained encrypted signed transaction bytes.
-- Fixed gateway/app.py in commit 1ecac49c319a094b563fad6e1118e7439f2bd697: when execute() receives a deterministic HTTP error (<500), it records REJECTED and clears the persisted signed transaction. HTTP errors >=500 remain UNKNOWN_REQUIRES_RECONCILIATION and preserve bytes because Verigate consume may have succeeded despite a timeout/transport failure.
-- Added a second regression test in commit b992dc53a6b13c339198f11488b8309a9673581b proving ambiguous 502 consume outcome preserves the encrypted transaction for manual reconciliation and does not set authorization_consumed.
-- Gateway CI passed on b992dc53a6b13c339198f11488b8309a9673581b: unit tests and Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44035125830.
-- Solidity CI passed on the same commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44035125842.
-- Sandbox at /mnt/data/aevumpay-sandbox now includes the earlier Ed25519 verifier snapshot plus a focused copy of the execute failure-state policy and two tests. Full sandbox pytest result: 7 passed in 0.28s. This is an isolated policy/verifier snapshot, not a full checkout; repository Gateway CI is the authoritative full-suite result.
-- No live Verigate endpoint, Aevum RPC, deployment, or payment was used. No production secrets were accessed.
-- Current main code/test commit: b992dc53a6b13c339198f11488b8309a9673581b. Checkpoint-only commit follows.
-
-
-## Session update — 2026-11-17 (Verigate HTTP boundary coverage)
-
-- Added HTTP-level tests around `authorize_and_consume` in `gateway/tests/test_gateway.py`:
-  - valid ALLOW + pinned Ed25519 authorization + consume execute=true;
-  - DENY without a consume request;
-  - identity, capability, agent and intent binding mismatches;
-  - invalid issuer signature rejected before consume;
-  - consume execute=false;
-  - consume transport failure and timeout fail closed.
-- The test additions exposed two test-fixture issues during CI (missing `httpx` import and incomplete action envelope); both were corrected. The earlier failing CI runs correspond to intermediate commits and are not the current result.
-- Latest code/test commit: `8b524fa207af6d4148abe36f4b5d0a09c4c59b7c`.
-- Gateway CI passed on that commit: all 23 Gateway tests passed and the Docker image built successfully. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036014605.
-- Solidity CI passed on the same commit. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036015013.
-- No production application code changed in this slice. No live Verigate endpoint, Aevum RPC, contract deployment or testnet payment was exercised.
-- Current scope remains mock-HTTP boundary coverage; it is not a live Verigate integration test.
-
-
-## Session update — 2026-11-17 (Verigate pre-consume failure classification)
-
-- Added regression coverage for failures before the /v1/execution/consume request: authorize timeout, authorize HTTP failure, malformed authorize JSON, and invalid issuer signature. The tests first failed on the old behavior (all were surfaced as HTTP 502).
-- Updated authorize_and_consume to track whether consume has started:
-  - Before consume starts, unexpected authorize/validation/transport failures return HTTP 424 (Failed Dependency). The execute handler treats this as a definitive pre-consume failure and clears the persisted signed transaction.
-  - Immediately before sending the consume request, the function marks the stage as potentially ambiguous. Any unexpected exception from then onward returns HTTP 502, preserving the signed transaction for reconciliation.
-  - Explicit policy DENY / identity binding mismatch and explicit consume execute=false retain their existing 403 behavior.
-- Latest code/test commit: 98d19b736f184f7c510b7f440cb3fa4003aa15ec.
-- Gateway CI passed: 26 tests passed; Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036754108.
-- Solidity CI passed. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44036754086.
-- The earlier red runs are intentional TDD evidence: first the new pre-consume cases failed (3 failures), then the implementation exposed one outdated expected status; corrected tests pass on the latest commit.
-- Still not exercised: live Verigate service, live QDay RPC, deployed router, or testnet payment. This is mocked HTTP boundary coverage only.
-
-## Session update — 2026-11-17 (executor nonce concurrency)
-
-- Verified current main before this slice: `e9eefd9d30fd137b11a790ebf2385bb6c13fa226`; both Gateway and Solidity CI were green on that HEAD.
-- Added a concurrent-execution regression test in `gateway/tests/test_gateway.py`. It deliberately blocks the first payment during preflight and verifies that a second request cannot enter nonce preflight before the first request finishes the critical section.
-- The regression test failed on the unmodified implementation on commit `d62475db04ea122c6d6f684460b8e0ab1d15595f`: 1 failed, 26 passed. CI log showed the second request entered preflight while the first was unresolved, confirming the race.
-- Fixed `gateway/app.py` in commit `9e167f51ede5acd95c0365776b0cd991e5494152`: introduced an in-process execution lock held from nonce lookup/signing through Verigate consume and transaction broadcast. Locking only the preflight function would not be sufficient because the RPC pending nonce may not advance while the first transaction is waiting on Verigate.
-- Gateway CI passed on `9e167f51ede5acd95c0365776b0cd991e5494152`: 27 tests passed and Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402225.
-- Solidity CI passed on the same commit. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402131.
-- README now documents the operational constraint: one Uvicorn worker and one running replica. The lock is process-local; horizontal scaling is not safe until a shared durable nonce-reservation mechanism is implemented.
-- This is a code-path fix verified in CI, not a live-chain concurrency test. No Verigate endpoint, Aevum RPC, deployment or payment was exercised.
-
-
-## Session update — 2026-11-17 (crash recovery regression coverage)
-
-- Verified current main before the final correction: `50c80a31ecb4ddaeb8ef99da80ac0cc4d0351bd6` (Gateway CI failed; see below).
-- Added two disk-backed crash-recovery tests in `gateway/tests/test_gateway.py`:
-  - crash after Verigate may have consumed authorization but before the SQLite consume marker: reconciliation returns HTTP 409, does not contact RPC, and preserves encrypted signed bytes;
-  - restart with the durable consume marker: reconciliation re-broadcasts the exact stored signed bytes, verifies the receipt/events and clears encrypted bytes after confirmation.
-- Initial CI runs exposed incomplete test doubles, not a production-code failure. The mock first lacked the Web3 transaction-hash shape, then lacked Web3 helper methods used before broadcast (`keccak` and `HTTPProvider`). These were corrected in the test fixture. No production gateway code was changed in this slice.
-- Final test-fixture commit: `c15c28cf3299f40f02c559af0464fb4e0e66e33e`.
-- Gateway CI passed on that commit: all 29 Gateway tests passed and Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44048575495.
-- Solidity CI passed on the same commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44048575476.
-- This verifies mocked crash recovery across two `PaymentStore` instances backed by the same SQLite file. It is not a real process kill, live Verigate reconciliation, live RPC broadcast, or testnet transaction.
-- Current remaining architecture constraint: `EXECUTION_LOCK` is process-local. One Uvicorn worker / one replica remains the documented safe deployment mode. A shared durable nonce reservation is still required before multi-worker or multi-replica operation.
-- No live Verigate endpoint, Aevum RPC, deployed router or payment was exercised.
+- Work is isolated on branch `feat/postgres-ledger`; `main` has not been modified.
+- Added `docs/POSTGRES_LEDGER_DESIGN.md` describing the required shared-ledger invariants, transaction protocol, crash handling and rollout gates.
+- Added `gateway/postgres_nonce.py`, an isolated PostgreSQL nonce reservation primitive. It uses a transaction-scoped advisory lock per chain/executor, a unique nonce key and a globally unique request ID. Reservations persist across store/process restarts.
+- Added PostgreSQL integration tests using six independent spawned processes, duplicate request ID rejection and reservation persistence after constructing a new store.
+- Added psycopg v3 to production gateway requirements and a PostgreSQL 16 service to Gateway CI.
+- Verified CI run `44054246429` on commit `d30bd21b75dd94c8b785744f33cf94634f4dc44c`: **32 passed**, 1 warning; Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44054246429.
+- This verifies the isolated nonce primitive against real PostgreSQL in CI. It does not verify payment-ledger persistence, consume/reconciliation across replicas, live QDay RPC or live Verigate.
+- The primitive is deliberately not wired into `gateway/app.py`; current SQLite payment execution and its one-worker/one-replica constraint remain unchanged.
+- The design document's status is updated to distinguish the implemented nonce primitive from the still-unimplemented PostgreSQL payment ledger.
+- Next bounded work: implement the PostgreSQL payment-ledger adapter and state transitions with crash-recovery tests before changing the payment execution path. Keep `main` untouched.
