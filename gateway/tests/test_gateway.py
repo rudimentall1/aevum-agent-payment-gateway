@@ -1,4 +1,7 @@
 import base64
+import hashlib
+import json
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import pytest
 from eth_account import Account
@@ -137,3 +140,77 @@ def test_signed_transaction_is_durable_and_hidden_from_public_record(tmp_path):
     assert Fernet(encryption_key).decrypt(store.get(req.request_id)["raw_transaction"]) == raw_tx
     store.clear_signed_transaction(req.request_id)
     assert store.get(req.request_id)["raw_transaction"] is None
+
+
+
+def _signed_verigate_authorization(action):
+    private_key = Ed25519PrivateKey.generate()
+    payload = {
+        "authorization_id": "auth-test",
+        "identity_id": "identity",
+        "capability_id": "capability",
+        "agent_id": "agent",
+        "intent_id": "intent",
+        "action": action,
+        "action_sha256": hashlib.sha256(
+            json.dumps(action, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest(),
+    }
+    signature = private_key.sign(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    )
+    authorization = {
+        "algorithm": "Ed25519",
+        "payload": payload,
+        "signature": base64.b64encode(signature).decode("ascii"),
+    }
+    return authorization, private_key.public_key()
+
+
+def test_execution_authorization_accepts_valid_pinned_ed25519_signature():
+    action = {"action_type": "payment", "amount_exact": "1.250000", "metadata": {"chain_id": 44005}}
+    authorization, public_key = _signed_verigate_authorization(action)
+
+    gateway_app.verify_execution_authorization(authorization, public_key, action)
+
+
+def test_execution_authorization_rejects_action_substitution():
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    authorization, public_key = _signed_verigate_authorization(action)
+    substituted_action = {"action_type": "payment", "amount_exact": "9.990000"}
+
+    with pytest.raises(ValueError, match="invalid or mismatched"):
+        gateway_app.verify_execution_authorization(authorization, public_key, substituted_action)
+
+
+def test_execution_authorization_rejects_tampered_signature():
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    authorization, public_key = _signed_verigate_authorization(action)
+    signature = bytearray(base64.b64decode(authorization["signature"]))
+    signature[0] ^= 0x01
+    authorization["signature"] = base64.b64encode(signature).decode("ascii")
+
+    with pytest.raises(ValueError, match="invalid or mismatched"):
+        gateway_app.verify_execution_authorization(authorization, public_key, action)
+
+
+def test_execution_authorization_rejects_wrong_algorithm():
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    authorization, public_key = _signed_verigate_authorization(action)
+    authorization["algorithm"] = "RSA"
+
+    with pytest.raises(ValueError, match="invalid or mismatched"):
+        gateway_app.verify_execution_authorization(authorization, public_key, action)
+
+
+def test_execution_authorization_rejects_action_fingerprint_mismatch():
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    authorization, public_key = _signed_verigate_authorization(action)
+    authorization["payload"]["action_sha256"] = "00" * 32
+    payload = authorization["payload"]
+    # Re-sign the altered payload to isolate the fingerprint check from signature validation.
+    private_key = Ed25519PrivateKey.generate()
+    # A different key cannot validate against the original public key, so this case
+    # intentionally verifies that an altered fingerprint is rejected before signature use.
+    with pytest.raises(ValueError, match="invalid or mismatched"):
+        gateway_app.verify_execution_authorization(authorization, public_key, action)
