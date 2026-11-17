@@ -176,7 +176,7 @@ def test_execution_authorization_accepts_valid_pinned_ed25519_signature():
 
 def test_execution_authorization_rejects_action_substitution():
     action = {"action_type": "payment", "amount_exact": "1.250000"}
-    authorization, public_key = _signed_verigate_authorization(action)
+    authorization, public_key, _ = _signed_verigate_authorization(action)
     substituted_action = {"action_type": "payment", "amount_exact": "9.990000"}
 
     with pytest.raises(ValueError, match="invalid or mismatched"):
@@ -185,7 +185,7 @@ def test_execution_authorization_rejects_action_substitution():
 
 def test_execution_authorization_rejects_tampered_signature():
     action = {"action_type": "payment", "amount_exact": "1.250000"}
-    authorization, public_key = _signed_verigate_authorization(action)
+    authorization, public_key, _ = _signed_verigate_authorization(action)
     signature = bytearray(base64.b64decode(authorization["signature"]))
     signature[0] ^= 0x01
     authorization["signature"] = base64.b64encode(signature).decode("ascii")
@@ -196,7 +196,7 @@ def test_execution_authorization_rejects_tampered_signature():
 
 def test_execution_authorization_rejects_wrong_algorithm():
     action = {"action_type": "payment", "amount_exact": "1.250000"}
-    authorization, public_key = _signed_verigate_authorization(action)
+    authorization, public_key, _ = _signed_verigate_authorization(action)
     authorization["algorithm"] = "RSA"
 
     with pytest.raises(ValueError, match="invalid or mismatched"):
