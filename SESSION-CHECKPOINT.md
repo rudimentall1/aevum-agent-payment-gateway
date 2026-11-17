@@ -135,3 +135,6 @@ At the beginning of every session:
 - The sandbox Python environment lacks web3, eth-account, and eth-abi, so the complete gateway/tests suite could not be run locally in this runtime. GitHub Actions Gateway CI was triggered for HEAD 4ca86da and was still in progress at the time of this checkpoint update: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44034600885.
 - Solidity CI for the same HEAD completed successfully: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44034600960.
 - No production code was changed. No Verigate endpoint, QDay RPC, contract deployment, or live payment was exercised.
+
+- Follow-up verification: Gateway CI run 44034600885 completed successfully for test commit 4ca86da9fa7dc1343a8e9b7848ed2910dea4d263. Both the full Gateway unit-test step and Docker image build passed. Run URL: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44034600885.
+- Latest main HEAD after the checkpoint-only follow-up is d1939470b891e02826c1eef17cc7ef96cf41c01a. The successful Gateway CI is tied to the immediately preceding code/test commit 4ca86da, not the docs-only checkpoint commit.
