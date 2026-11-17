@@ -176,7 +176,7 @@ def test_execution_authorization_accepts_valid_pinned_ed25519_signature():
 
 
 def test_execution_authorization_rejects_action_substitution():
-    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    action = _verigate_test_action()
     authorization, public_key, _ = _signed_verigate_authorization(action)
     substituted_action = {"action_type": "payment", "amount_exact": "9.990000"}
 
@@ -236,7 +236,7 @@ def test_definitive_verigate_rejection_discards_persisted_signed_transaction(mon
         timestamp=1_700_000_000.0,
         agent_signature="agent-signature",
     )
-    action = {"action_type": "payment"}
+    action = _verigate_test_action()
     monkeypatch.setattr(
         gateway_app, "prepare_payment",
         lambda _req: ({}, action, 1_250_000, "0x1234", req.request_id),
@@ -366,6 +366,22 @@ def _verigate_test_request():
         timestamp=1_700_000_000.0,
         agent_signature="agent-signature",
     )
+
+
+def _verigate_test_action():
+    return {
+        "action_type": "payment",
+        "target": "0x0000000000000000000000000000000000000002",
+        "resource": "tUSD8",
+        "amount_exact": "1.250000",
+        "asset": "tUSD8",
+        "network": "aevum-testnet",
+        "purpose": "agent payment",
+        "declared_context": {},
+        "requested_capability": None,
+        "constraints": {},
+        "metadata": {"network_family": "evm"},
+    }
 
 
 def _verigate_allow_body(action):
