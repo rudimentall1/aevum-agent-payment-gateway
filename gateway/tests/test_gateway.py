@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import pytest
@@ -417,15 +418,16 @@ def test_authorize_and_consume_rejects_deny_without_consuming(monkeypatch):
 def test_authorize_and_consume_rejects_mismatched_authority_binding(monkeypatch, field):
     req = _verigate_test_request()
     action = {"action_type": "payment"}
-    body, public_key = _verigate_allow_body(action)
-    body["execution_authorization"]["payload"][field] = "attacker-controlled-value"
-    # Re-sign the altered payload so this test isolates the explicit request binding check.
-    private_key = Ed25519PrivateKey.generate()
-    body["execution_authorization"], public_key, _ = _signed_verigate_authorization(action)
-    body["execution_authorization"]["payload"][field] = "attacker-controlled-value"
-    payload = body["execution_authorization"]["payload"]
-    payload_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    body["execution_authorization"]["signature"] = base64.b64encode(private_key.sign(payload_bytes)).decode("ascii")
+    authorization, public_key, private_key = _signed_verigate_authorization(action)
+    authorization["payload"][field] = "attacker-controlled-value"
+    payload_bytes = json.dumps(
+        authorization["payload"], sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    authorization["signature"] = base64.b64encode(private_key.sign(payload_bytes)).decode("ascii")
+    body = {
+        "decision_receipt": {"payload": {"decision": {"decision": "ALLOW"}}},
+        "execution_authorization": authorization,
+    }
     # The binding check must reject before signature verification or consume.
     client = _FakeVerigateClient([_FakeVerigateResponse(body)])
     monkeypatch.setattr(gateway_app.httpx, "Client", lambda **_kwargs: client)
