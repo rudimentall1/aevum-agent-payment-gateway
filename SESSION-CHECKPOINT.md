@@ -192,3 +192,18 @@ At the beginning of every session:
 - Solidity CI passed on the same commit. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402131.
 - README now documents the operational constraint: one Uvicorn worker and one running replica. The lock is process-local; horizontal scaling is not safe until a shared durable nonce-reservation mechanism is implemented.
 - This is a code-path fix verified in CI, not a live-chain concurrency test. No Verigate endpoint, Aevum RPC, deployment or payment was exercised.
+
+
+## Session update — 2026-11-17 (crash recovery regression coverage)
+
+- Verified current main before the final correction: `50c80a31ecb4ddaeb8ef99da80ac0cc4d0351bd6` (Gateway CI failed; see below).
+- Added two disk-backed crash-recovery tests in `gateway/tests/test_gateway.py`:
+  - crash after Verigate may have consumed authorization but before the SQLite consume marker: reconciliation returns HTTP 409, does not contact RPC, and preserves encrypted signed bytes;
+  - restart with the durable consume marker: reconciliation re-broadcasts the exact stored signed bytes, verifies the receipt/events and clears encrypted bytes after confirmation.
+- Initial CI runs exposed incomplete test doubles, not a production-code failure. The mock first lacked the Web3 transaction-hash shape, then lacked Web3 helper methods used before broadcast (`keccak` and `HTTPProvider`). These were corrected in the test fixture. No production gateway code was changed in this slice.
+- Final test-fixture commit: `c15c28cf3299f40f02c559af0464fb4e0e66e33e`.
+- Gateway CI passed on that commit: all 29 Gateway tests passed and Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44048575495.
+- Solidity CI passed on the same commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44048575476.
+- This verifies mocked crash recovery across two `PaymentStore` instances backed by the same SQLite file. It is not a real process kill, live Verigate reconciliation, live RPC broadcast, or testnet transaction.
+- Current remaining architecture constraint: `EXECUTION_LOCK` is process-local. One Uvicorn worker / one replica remains the documented safe deployment mode. A shared durable nonce reservation is still required before multi-worker or multi-replica operation.
+- No live Verigate endpoint, Aevum RPC, deployed router or payment was exercised.
