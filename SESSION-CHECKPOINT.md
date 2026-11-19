@@ -184,3 +184,12 @@ At the beginning of every session:
 - Still not live-verified by AevumPay: RPC eth_chainId/block number, tUSD8 bytecode/decimals, router deployment, Verigate authorize/consume, approval and payment receipt. The manual verification workflow must be run in GitHub Actions first; the deployment workflow can then be run after secrets are configured.
 - Latest checkpoint preparation HEAD before this append: `d3b2238c275a9144efa2a9d6f16d0860b9537f36`. Gateway CI was running; Solidity CI had passed. Re-check CI on the resulting latest `main` HEAD before calling it green.
 - Do not enable multiple Uvicorn workers/replicas until cross-process execution and crash/recovery acceptance tests are complete. PostgreSQL nonce allocation is process-safe; the full Verigate-consume-to-broadcast critical section is not yet proven across multiple replicas.
+
+
+## Verification update — 2026-11-19
+
+- Main HEAD `1f923eb3a58cb5489009e904b86e80eeff51baac` passed both workflows:
+  - Gateway CI: **48 passed**, PostgreSQL 16 integration suite green, Docker image build successful. https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44538630505
+  - Solidity CI: success. https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44538630577
+- Current code includes the PostgreSQL safe nonce release and legacy migration, Verigate malformed-input hardening, manual QDay verification and guarded router deployment workflows.
+- After the README/checkpoint documentation updates, re-check CI on the resulting HEAD. Do not claim live deployment/payment or live Verigate integration until the manual workflows and external setup have actually been run.
