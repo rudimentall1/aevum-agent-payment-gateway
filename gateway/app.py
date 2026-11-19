@@ -25,6 +25,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from web3 import Web3
 
+from gateway.postgres_ledger import PostgresPaymentStore
+
 
 CHAIN_ID = int(os.getenv("AEVUMPAY_CHAIN_ID", "44005"))
 TOKEN_ADDRESS = os.getenv("AEVUMPAY_TOKEN", "0x456569838f1d43009A91ebA4263147Afd7233483")
@@ -342,7 +344,10 @@ class PaymentStore:
                 (status, tx_hash, detail, status, int(time.time()), request_id.lower()),
             )
 
-    def set_signed_transaction(self, request_id: str, tx_hash: str, raw_transaction: bytes) -> None:
+    def set_signed_transaction(
+        self, request_id: str, tx_hash: str, raw_transaction: bytes,
+        chain_id: int | None = None, executor_address: str | None = None, nonce: int | None = None,
+    ) -> None:
         if self.cipher is None:
             raise RuntimeError("AEVUMPAY_TX_ENCRYPTION_KEY is required to persist signed transactions")
         encrypted_transaction = self.cipher.encrypt(raw_transaction)
@@ -364,6 +369,18 @@ class PaymentStore:
         with self._connect() as db:
             row = db.execute("SELECT * FROM payments WHERE request_id=?", (request_id.lower(),)).fetchone()
             return dict(row) if row else None
+
+def create_payment_store():
+    """Select the shared PostgreSQL ledger only when explicitly configured.
+
+    SQLite remains the default for existing single-worker deployments.
+    """
+    database_url = os.getenv("AEVUMPAY_DATABASE_URL", "").strip()
+    if database_url:
+        if not TX_ENCRYPTION_KEY:
+            raise RuntimeError("AEVUMPAY_TX_ENCRYPTION_KEY is required with PostgreSQL")
+        return PostgresPaymentStore(database_url, TX_ENCRYPTION_KEY)
+    return PaymentStore()
 
 
 def verify_payment_events(logs: list[Any], payer: str, recipient: str, amount: int, request_id: str) -> bool:
@@ -451,7 +468,18 @@ def prepare_payment(req: PaymentFields) -> tuple[dict[str, Any], dict[str, Any],
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def preflight_transaction(req: ExecuteRequest, amount_units: int, request_id: str) -> dict[str, Any]:
+def reserve_transaction_nonce(w3: Web3, executor_address: str, request_id: str, payment_store=None) -> int:
+    """Use a durable shared reservation when the selected store supports it."""
+    pending_nonce = w3.eth.get_transaction_count(executor_address, "pending")
+    reserve = getattr(payment_store, "reserve_nonce", None)
+    if callable(reserve):
+        return reserve(CHAIN_ID, executor_address, pending_nonce, request_id)
+    return pending_nonce
+
+
+def preflight_transaction(
+    req: ExecuteRequest, amount_units: int, request_id: str, payment_store=None
+) -> dict[str, Any]:
     # Validate and sign the exact transaction before consuming one-time Verigate
     # authority. The signed bytes and deterministic hash are persisted before
     # consume, so a process restart does not lose the only broadcastable tx.
@@ -481,7 +509,7 @@ def preflight_transaction(req: ExecuteRequest, amount_units: int, request_id: st
             payer, token_address, Web3.to_checksum_address(req.recipient),
             amount_units, request_id, req.deadline, req.payer_signature,
         )
-        nonce = w3.eth.get_transaction_count(account.address, "pending")
+        nonce = reserve_transaction_nonce(w3, account.address, request_id, payment_store)
         tx = {
             "from": account.address,
             "to": router_address,
@@ -502,6 +530,8 @@ def preflight_transaction(req: ExecuteRequest, amount_units: int, request_id: st
             "web3": w3,
             "raw_transaction": raw_transaction,
             "transaction_hash": tx_hash,
+            "executor_address": account.address,
+            "nonce": nonce,
         }
     except Exception as exc:
         raise HTTPException(
@@ -645,7 +675,7 @@ def submit_transaction(
 
 
 app = FastAPI(title="AevumPay Gateway", version="0.1.0")
-store = PaymentStore()
+store = create_payment_store()
 
 
 @app.get("/health")
@@ -705,9 +735,14 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
         prepared = None
         def prepare_and_persist():
             nonlocal prepared
-            prepared = preflight_transaction(req, amount_units, request_id)
+            prepared = preflight_transaction(req, amount_units, request_id, store)
             store.set_signed_transaction(
-                request_id, prepared["transaction_hash"], prepared["raw_transaction"]
+                request_id,
+                prepared["transaction_hash"],
+                prepared["raw_transaction"],
+                CHAIN_ID,
+                prepared["executor_address"],
+                prepared["nonce"],
             )
         try:
             authorization = authorize_and_consume(
