@@ -770,3 +770,22 @@ def test_create_payment_store_selects_postgres_only_when_explicitly_configured(m
     monkeypatch.delenv("AEVUMPAY_DATABASE_URL")
     monkeypatch.setattr(gateway_app, "DB_PATH", str(tmp_path / "default.sqlite"))
     assert isinstance(gateway_app.create_payment_store(), PaymentStore)
+
+
+def test_execution_authorization_rejects_non_object_envelopes():
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    authorization, public_key, _ = _signed_verigate_authorization(action)
+
+    for malformed in (None, [], "not-an-object"):
+        with pytest.raises(ValueError, match="invalid or mismatched"):
+            gateway_app.verify_execution_authorization(malformed, public_key, action)
+
+
+def test_execution_authorization_rejects_non_object_payloads():
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    authorization, public_key, _ = _signed_verigate_authorization(action)
+
+    for malformed_payload in (None, [], "not-an-object"):
+        malformed = {**authorization, "payload": malformed_payload}
+        with pytest.raises(ValueError, match="invalid or mismatched"):
+            gateway_app.verify_execution_authorization(malformed, public_key, action)
