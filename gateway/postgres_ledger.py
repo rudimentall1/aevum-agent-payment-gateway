@@ -62,9 +62,19 @@ class PostgresPaymentStore:
                     state TEXT NOT NULL DEFAULT 'RESERVED',
                     tx_hash TEXT,
                     created_at BIGINT NOT NULL,
-                    updated_at BIGINT NOT NULL,
-                    PRIMARY KEY (chain_id, executor_address, nonce)
+                    updated_at BIGINT NOT NULL
                 )
+            """)
+            # Safe pre-consume rejections may release a nonce. Keep the audit
+            # row, but enforce uniqueness only while a reservation is active.
+            db.execute("""
+                ALTER TABLE aevumpay_payment_nonce_reservations
+                DROP CONSTRAINT IF EXISTS aevumpay_payment_nonce_reservations_pkey
+            """)
+            db.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS aevumpay_active_nonce_unique
+                ON aevumpay_payment_nonce_reservations (chain_id, executor_address, nonce)
+                WHERE state NOT IN ('ABANDONED', 'RELEASED')
             """)
 
     @staticmethod
@@ -120,12 +130,20 @@ class PostgresPaymentStore:
                 if existing["chain_id"] != chain_id or existing["executor_address"] != executor:
                     raise ValueError("request_id already has a reservation for another executor")
                 return existing["nonce"]
-            highest = db.execute(
-                """SELECT MAX(nonce) AS nonce FROM aevumpay_payment_nonce_reservations
-                   WHERE chain_id=%s AND executor_address=%s""",
-                (chain_id, executor),
-            ).fetchone()["nonce"]
-            nonce = max(pending_nonce, highest + 1 if highest is not None else pending_nonce)
+            occupied = db.execute(
+                """SELECT nonce FROM aevumpay_payment_nonce_reservations
+                   WHERE chain_id=%s AND executor_address=%s
+                     AND state NOT IN ('ABANDONED', 'RELEASED') AND nonce >= %s
+                   ORDER BY nonce""",
+                (chain_id, executor, pending_nonce),
+            ).fetchall()
+            nonce = pending_nonce
+            for reservation in occupied:
+                reserved_nonce = reservation["nonce"]
+                if reserved_nonce == nonce:
+                    nonce += 1
+                elif reserved_nonce > nonce:
+                    break
             db.execute(
                 """INSERT INTO aevumpay_payment_nonce_reservations
                    (chain_id, executor_address, nonce, request_id, created_at, updated_at)
@@ -211,6 +229,33 @@ class PostgresPaymentStore:
                    SET state=%s, tx_hash=COALESCE(%s, tx_hash), updated_at=%s
                    WHERE request_id=%s""",
                 (status, tx_hash, now, normalized_id),
+            )
+
+    def release_nonce_reservation(self, request_id: str) -> None:
+        """Release a nonce only for a definitively rejected, unconsumed payment.
+
+        The reservation row is retained as an audit record. Its nonce becomes
+        reusable by a later request, while active reservations remain unique.
+        """
+        normalized_id = request_id.lower()
+        now = int(time.time())
+        with self._connect() as db:
+            payment = db.execute(
+                """SELECT status, authorization_consumed FROM aevumpay_payments
+                   WHERE request_id=%s FOR UPDATE""",
+                (normalized_id,),
+            ).fetchone()
+            if payment is None:
+                raise ValueError("payment does not exist")
+            if payment["authorization_consumed"]:
+                raise ValueError("cannot release a consumed nonce reservation")
+            if payment["status"] != "REJECTED":
+                raise ValueError("nonce can be released only for a rejected payment")
+            db.execute(
+                """UPDATE aevumpay_payment_nonce_reservations
+                   SET state='ABANDONED', updated_at=%s
+                   WHERE request_id=%s AND state NOT IN ('ABANDONED', 'RELEASED')""",
+                (now, normalized_id),
             )
 
     def clear_signed_transaction(self, request_id: str) -> None:
