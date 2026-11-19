@@ -18,8 +18,8 @@ class PostgresPaymentStore:
     """Shared durable payment ledger and nonce reservations.
 
     Each state transition that affects payment execution and its nonce audit
-    record is committed in one PostgreSQL transaction. This adapter is not
-    wired into the HTTP execution path yet.
+    record is committed in one PostgreSQL transaction. The Gateway selects
+    this adapter when AEVUMPAY_DATABASE_URL is configured.
     """
 
     def __init__(self, database_url: str, encryption_key: str | bytes):
