@@ -291,3 +291,24 @@ def test_consumed_nonce_reservation_cannot_be_released():
 
     with pytest.raises(ValueError, match="consumed"):
         store.release_nonce_reservation(req.request_id)
+
+
+def test_startup_migration_releases_legacy_rejected_unconsumed_nonce_rows():
+    key = Fernet.generate_key()
+    store = PostgresPaymentStore(DATABASE_URL, key)
+    reset_ledger_tables()
+    executor = "0x000000000000000000000000000000000000aE09"
+    rejected = payment("0x" + "bb" * 32)
+    next_payment = payment("0x" + "cc" * 32)
+    store.reserve(rejected, 1)
+    store.reserve(next_payment, 1)
+    nonce = store.reserve_nonce(44005, executor, 29, rejected.request_id)
+    store.set_signed_transaction(
+        rejected.request_id, "0x" + "ef" * 32, b"legacy-rejected-bytes",
+        44005, executor, nonce,
+    )
+    store.update(rejected.request_id, "REJECTED", detail="legacy pre-consume denial")
+
+    restarted = PostgresPaymentStore(DATABASE_URL, key)
+    assert restarted.get_nonce_reservation(rejected.request_id)["state"] == "ABANDONED"
+    assert restarted.reserve_nonce(44005, executor, 29, next_payment.request_id) == 29
