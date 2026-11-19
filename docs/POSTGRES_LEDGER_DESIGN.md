@@ -1,6 +1,6 @@
 # PostgreSQL Ledger and Nonce Coordination
 
-Status: partial implementation. The PostgreSQL payment-ledger adapter is wired into `gateway/app.py` as an explicit opt-in runtime backend via `AEVUMPAY_DATABASE_URL`. The Gateway obtains the RPC pending nonce, reserves a unique nonce in PostgreSQL, and persists the encrypted signed transaction together with the matching reservation before Verigate consume. The atomic consume marker and reservation transition are also handled by the adapter. However, end-to-end cross-process crash/restart and reconciliation acceptance tests are still missing. PostgreSQL mode remains experimental; do not enable multiple Gateway workers or replicas yet.
+Status: partial implementation. The PostgreSQL payment-ledger adapter is wired into `gateway/app.py` as an explicit opt-in runtime backend via `AEVUMPAY_DATABASE_URL`. The Gateway obtains the RPC pending nonce, reserves a unique nonce in PostgreSQL, and persists the encrypted signed transaction together with the matching reservation before Verigate consume. The atomic consume marker and reservation transition are also handled by the adapter. Definitive pre-consume rejection releases the unused nonce while retaining an ABANDONED audit row; nonce allocation reuses the lowest safe gap instead of permanently advancing past it. Startup migrates legacy REJECTED/unconsumed reservations to ABANDONED. However, end-to-end cross-process crash/restart and reconciliation acceptance tests are still missing. PostgreSQL mode remains experimental; do not enable multiple Gateway workers or replicas yet.
 
 ## Goal
 
@@ -80,7 +80,7 @@ The schema must be migrated carefully from the current primitive table without d
 9. Broadcast only the persisted signed bytes. Record SUBMITTING/PENDING/terminal state as evidence arrives.
 10. Reconciliation reads the shared ledger and chain. It may rebroadcast only the same signed bytes and only after durable consume confirmation.
 
-The advisory lock protects nonce selection and reservation. The unique database constraint is the final concurrency guard. The durable reservation, not a long-lived network lock, protects the nonce across process crashes and database connection loss.
+The advisory lock protects nonce selection and reservation. A partial unique index protects active nonce claims while allowing a definitively abandoned nonce to be reused without deleting its audit row. The durable reservation, not a long-lived network lock, protects the nonce across process crashes and database connection loss.
 
 ## Failure handling
 
@@ -89,6 +89,7 @@ The advisory lock protects nonce selection and reservation. The unique database 
 - Crash after signing but before Verigate consume: retain encrypted bytes and reservation. No automatic broadcast.
 - Crash during consume: retain bytes and reservation; require authoritative consume reconciliation.
 - Crash after consume marker but before broadcast: reconciliation may broadcast the exact stored bytes.
+- Definitive Verigate denial or preflight failure before consume: mark the payment REJECTED, mark its nonce reservation ABANDONED, retain the audit row, and allow a later request to reuse that nonce.
 - RPC broadcast timeout: retain bytes and reservation; inspect transaction hash/receipt before any retry.
 - Confirmed or reverted receipt: mark terminal and retain an audit record. Do not delete the nonce history.
 
