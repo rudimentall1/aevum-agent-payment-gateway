@@ -760,7 +760,7 @@ def test_create_payment_store_selects_postgres_only_when_explicitly_configured(m
         return sentinel
 
     monkeypatch.setenv("AEVUMPAY_DATABASE_URL", "postgresql://gateway/db")
-    monkeypatch.setattr(gateway_app, "TX_ENCRYPTION_KEY", "test-fernet-key")
+    monkeypatch.setattr(gateway_app, "TX_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
     monkeypatch.setattr(gateway_app, "PostgresPaymentStore", fake_postgres_store)
 
     assert gateway_app.create_payment_store() is sentinel
