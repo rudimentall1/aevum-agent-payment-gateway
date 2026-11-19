@@ -40,8 +40,8 @@ Do not interpret a DNS failure in one sandbox as proof that the public RPC is do
 
 Two manual GitHub Actions workflows are provided:
 
-- **Verify QDay Testnet** (`.github/workflows/qday-testnet-verify.yml`) checks the live RPC chain ID, latest block, tUSD8 bytecode and ERC-20 name/symbol/decimals. Run it from the repository's Actions tab before deploying.
-- **Deploy AevumPay Router** (`.github/workflows/deploy-aevumpay.yml`) validates the RPC and tUSD8, checks the deployer/owner match and gas balance, deploys the router, enables tUSD8, then verifies owner, executor and token allowlist. It publishes the router address and deployment artifact.
+- **[Verify QDay Testnet](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/workflows/qday-testnet-verify.yml)** (`.github/workflows/qday-testnet-verify.yml`) checks the live RPC chain ID, latest block, tUSD8 bytecode and ERC-20 name/symbol/decimals. Run it from the repository's Actions tab before deploying.
+- **[Deploy AevumPay Router](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/workflows/deploy-aevumpay.yml)** (`.github/workflows/deploy-aevumpay.yml`) validates the RPC and tUSD8, checks the deployer/owner match and gas balance, deploys the router, enables tUSD8, then verifies owner, executor and token allowlist. It publishes the router address and deployment artifact.
 
 The deployment workflow requires these GitHub Actions repository secrets:
 
