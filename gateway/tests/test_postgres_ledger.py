@@ -48,7 +48,7 @@ def test_payment_record_is_durable_and_duplicate_request_is_rejected():
 def test_signed_transaction_and_consume_marker_are_atomic_and_durable():
     key = Fernet.generate_key()
     store = PostgresPaymentStore(DATABASE_URL, key)
-    store.reset_for_test()
+    reset_ledger_tables()
     req = payment()
     store.reserve(req, 99)
     nonce = store.reserve_nonce(44005, "0x000000000000000000000000000000000000aE01", 17, req.request_id)
@@ -72,7 +72,7 @@ def test_signed_transaction_and_consume_marker_are_atomic_and_durable():
 def test_nonce_reservation_requires_existing_payment_and_survives_restart():
     key = Fernet.generate_key()
     store = PostgresPaymentStore(DATABASE_URL, key)
-    store.reset_for_test()
+    reset_ledger_tables()
     executor = "0x000000000000000000000000000000000000aE02"
     with pytest.raises(ValueError, match="payment"):
         store.reserve_nonce(44005, executor, 3, "missing-payment")
@@ -87,7 +87,7 @@ def test_nonce_reservation_requires_existing_payment_and_survives_restart():
 def test_clear_signed_transaction_preserves_nonce_audit_record():
     key = Fernet.generate_key()
     store = PostgresPaymentStore(DATABASE_URL, key)
-    store.reset_for_test()
+    reset_ledger_tables()
     req = payment("0x" + "33" * 32)
     executor = "0x000000000000000000000000000000000000aE03"
     store.reserve(req, 7)
@@ -114,7 +114,7 @@ def _reserve_ledger_nonce_worker(database_url, key, request_id, executor, barrie
 def test_independent_processes_reserve_distinct_nonces_for_different_payments():
     key = Fernet.generate_key()
     store = PostgresPaymentStore(DATABASE_URL, key)
-    store.reset_for_test()
+    reset_ledger_tables()
     workers = 5
     executor = "0x000000000000000000000000000000000000aE04"
     request_ids = ["0x" + f"{i:02x}" * 32 for i in range(40, 40 + workers)]
@@ -142,7 +142,7 @@ def test_independent_processes_reserve_distinct_nonces_for_different_payments():
 
 def test_consume_marker_cannot_be_written_without_durable_signed_transaction():
     store = PostgresPaymentStore(DATABASE_URL, Fernet.generate_key())
-    store.reset_for_test()
+    reset_ledger_tables()
     req = payment("0x" + "44" * 32)
     store.reserve(req, 1)
     with pytest.raises(ValueError, match="signed transaction"):
