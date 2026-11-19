@@ -32,8 +32,8 @@ QDay Aevum Testnet, chain ID 44005 (0xabe5). Test token tUSD8: `0x456569838f1d43
 - PostgreSQL uses durable nonce reservations, encrypted signed-transaction storage and a durable Verigate-consumed marker. A definitively rejected, unconsumed payment can release its nonce for safe reuse while preserving an audit row. Ambiguous consume outcomes retain the reservation and signed bytes for manual reconciliation.
 - Gateway CI runs unit and PostgreSQL integration tests and builds the Docker image. Solidity CI compiles the router and runs Foundry tests.
 - Fixed a PostgreSQL nonce-gap bug after a definitive pre-consume rejection. Rejected, unconsumed reservations are now retained as ABANDONED audit rows and their nonce can be safely reused; startup migrates legacy REJECTED/unconsumed rows.
-- Gateway CI passed on commit `159f68dd564ae7027d4a6ec079d0d12e6980d86e`: **48 tests passed** against PostgreSQL 16 and the Docker image built successfully. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44538122595.
-- Solidity CI also passed on that commit. Later commits add manual QDay verification/deployment workflows and documentation; check the latest Actions run for the current HEAD before claiming it green.
+- Gateway CI passed on current main HEAD `1f923eb3a58cb5489009e904b86e80eeff51baac`: **48 tests passed** against PostgreSQL 16 and the Docker image built successfully. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44538630505.
+- Solidity CI also passed on the same HEAD: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44538630577.
 - Added a manual QDay RPC/token verification workflow and a guarded router deployment workflow. Deployment requires GitHub repository secrets `AEVUMPAY_DEPLOYER_PRIVATE_KEY`, `AEVUMPAY_OWNER`, and `AEVUMPAY_EXECUTOR`.
 - The router has not yet been deployed to Aevum. No AevumPay testnet payment has been sent. The gateway has not been live-integrated with Verigate.
 
