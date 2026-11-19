@@ -34,3 +34,19 @@ Do not interpret a DNS failure in one sandbox as proof that the public RPC is do
 - Wallet integration: https://wiki.qday.info/Knowledge/technical/developer-guide/wallet-integration
 - GitHub: https://github.com/qday-io
 - Discord: https://discord.gg/bYPhjmrSfK
+
+
+## Repository-assisted verification and deployment
+
+Two manual GitHub Actions workflows are provided:
+
+- **Verify QDay Testnet** (`.github/workflows/qday-testnet-verify.yml`) checks the live RPC chain ID, latest block, tUSD8 bytecode and ERC-20 name/symbol/decimals. Run it from the repository's Actions tab before deploying.
+- **Deploy AevumPay Router** (`.github/workflows/deploy-aevumpay.yml`) validates the RPC and tUSD8, checks the deployer/owner match and gas balance, deploys the router, enables tUSD8, then verifies owner, executor and token allowlist. It publishes the router address and deployment artifact.
+
+The deployment workflow requires these GitHub Actions repository secrets:
+
+- `AEVUMPAY_DEPLOYER_PRIVATE_KEY` — funded testnet deployer key; must correspond to the owner address.
+- `AEVUMPAY_OWNER` — public address derived from the deployer key.
+- `AEVUMPAY_EXECUTOR` — public EOA address that will be configured as the router executor.
+
+Never put private keys in workflow inputs, repository files, issues, or chat. After deployment, copy the verified router address into the Gateway runtime as `AEVUMPAY_ROUTER_ADDRESS`; the executor private key configured in the Gateway must correspond to `AEVUMPAY_EXECUTOR`.
