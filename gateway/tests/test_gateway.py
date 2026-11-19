@@ -759,12 +759,13 @@ def test_create_payment_store_selects_postgres_only_when_explicitly_configured(m
         calls.append((database_url, encryption_key))
         return sentinel
 
+    encryption_key = Fernet.generate_key().decode("ascii")
     monkeypatch.setenv("AEVUMPAY_DATABASE_URL", "postgresql://gateway/db")
-    monkeypatch.setattr(gateway_app, "TX_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setattr(gateway_app, "TX_ENCRYPTION_KEY", encryption_key)
     monkeypatch.setattr(gateway_app, "PostgresPaymentStore", fake_postgres_store)
 
     assert gateway_app.create_payment_store() is sentinel
-    assert calls == [("postgresql://gateway/db", "test-fernet-key")]
+    assert calls == [("postgresql://gateway/db", encryption_key)]
 
     monkeypatch.delenv("AEVUMPAY_DATABASE_URL")
     monkeypatch.setattr(gateway_app, "DB_PATH", str(tmp_path / "default.sqlite"))
