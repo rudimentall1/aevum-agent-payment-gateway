@@ -59,7 +59,7 @@ def test_independent_processes_reserve_distinct_sequential_nonces():
 
 def test_duplicate_request_id_cannot_claim_two_nonces():
     store = PostgresNonceStore(DATABASE_URL)
-    store.reset_for_test()
+    reset_nonce_table()
     executor = "0x000000000000000000000000000000000000aE02"
     first = store.reserve_nonce(44005, executor, 7, "same-request")
     with pytest.raises(ValueError, match="already has a nonce"):
