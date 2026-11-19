@@ -1,6 +1,6 @@
 # AevumPay Session Checkpoint
 
-Last updated: 2026-11-16 (exact signed transaction flow and encrypted crash reconciliation added)
+Last updated: 2026-11-19 (PostgreSQL runtime wiring and reconciliation tests in progress)
 
 ## Repository state
 - Repository: https://github.com/rudimentall1/aevum-agent-payment-gateway
@@ -133,3 +133,18 @@ At the beginning of every session:
 - **Not yet integrated:** `gateway/app.py` still uses SQLite `PaymentStore` and the process-local `EXECUTION_LOCK`. The PostgreSQL adapter is not wired into payment execution, so multi-worker/multi-replica operation remains unsupported.
 - No live Verigate, Aevum RPC, contract deployment, testnet payment, or cross-replica crash-recovery flow was exercised.
 - Next: verify CI for the cleanup commits; add crash/restart tests against the PostgreSQL ledger itself; then design the explicit runtime backend selection and wire nonce reservation into preflight/sign/persist/consume/broadcast/reconcile without changing the SQLite default. Keep `main` untouched.
+
+
+## Session update — 2026-11-19 (PostgreSQL runtime wiring)
+
+- Re-read this checkpoint first. Verified main remains at f84159118e18f408ee65e1336ad05f487170de3c; all work below is isolated on feat/postgres-ledger.
+- Fixed the incomplete PostgreSQL test-cleanup migration: six integration tests still called the removed production reset_for_test() methods. They now use test-module cleanup helpers. Gateway CI passed on 07733739e9936ec67ca248f9c3adcaa2d9499d75; Solidity CI also passed. Gateway run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44533999342.
+- TDD for runtime nonce wiring: added tests for shared PostgreSQL nonce allocation and SQLite fallback. The tests failed on commit 6bfd246df1c919a32b4db54451f958e1186453f8 because reserve_transaction_nonce did not yet exist. This is the observed RED step.
+- Wired create_payment_store() into gateway/app.py: AEVUMPAY_DATABASE_URL explicitly selects PostgresPaymentStore; without it, SQLite remains the default. PostgreSQL mode requires AEVUMPAY_TX_ENCRYPTION_KEY.
+- Wired preflight_transaction() to read the executor's RPC pending nonce and pass it to the PostgreSQL store's advisory-lock-backed reserve_nonce(). The selected nonce and executor address are returned with the signed transaction. In PostgreSQL mode, the Gateway passes chain ID, executor and nonce to set_signed_transaction(), which atomically stores encrypted signed bytes and transitions the matching reservation to SIGNED. The SQLite method and pending-nonce behavior remain unchanged.
+- Added tests for explicit PostgreSQL backend selection and SQLite default selection. Added PostgreSQL-backed Gateway reconciliation tests: no broadcast before the durable consume marker; after creating a new store instance, reconciliation rebroadcasts the exact persisted bytes and verifies terminal ledger/reservation state.
+- Updated .env.example, gateway/README.md and docs/POSTGRES_LEDGER_DESIGN.md to describe AEVUMPAY_DATABASE_URL and the actual runtime integration. The standalone PostgresNonceStore remains unused by the HTTP path; runtime uses the linked nonce table in PostgresPaymentStore.
+- CI history after runtime wiring exposed test-fixture mismatches (fake preflight return shape and a stale Fernet-key expectation); these were corrected in subsequent commits. Do not cite the intermediate failed runs as current behavior.
+- Latest branch HEAD at checkpoint preparation: 09eb3625a7d2119d945aca5b474baf2c28d3ce31. Solidity CI run 44534946082 completed successfully. Gateway CI run 44534946483 is still in progress; its result must be checked before treating the latest code as green.
+- Still not verified: full Gateway CI for the latest HEAD; process-level crash/restart under concurrent execution; end-to-end Verigate integration; live QDay RPC; contract deployment; testnet payment. PostgreSQL mode remains experimental and multiple workers/replicas remain unsupported until the full acceptance suite passes.
+- Next: inspect Gateway CI for the latest HEAD; fix any failures; then run/extend the complete PostgreSQL acceptance suite for crash points around reservation, signing, consume, broadcast and reconciliation. Keep main untouched.
