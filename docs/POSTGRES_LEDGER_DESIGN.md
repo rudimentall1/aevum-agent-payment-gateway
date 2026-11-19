@@ -1,6 +1,6 @@
 # PostgreSQL Ledger and Nonce Coordination
 
-Status: partial implementation. The standalone nonce reservation primitive is implemented and CI-tested against PostgreSQL 16. The shared payment ledger, transactional payment-state transitions and execution integration are not implemented. PostgreSQL mode is not production-ready and must not be used to enable multiple Gateway replicas.
+Status: partial implementation. A standalone nonce primitive and a separate PostgreSQL payment-ledger adapter are implemented and CI-tested against PostgreSQL 16. The adapter is not wired into the HTTP execution path; transactional payment persistence exists inside the adapter, but end-to-end Gateway execution, crash recovery and reconciliation against this shared ledger are not yet implemented. PostgreSQL mode is not production-ready and must not be used to enable multiple Gateway replicas.
 
 ## Goal
 
@@ -24,9 +24,24 @@ Allow more than one Gateway process to share payment state without allowing two 
 - Durable unique constraint on (chain_id, executor_address, nonce).
 - Globally unique request ID constraint.
 - Conservative allocation from max(pending_nonce, highest_reserved_nonce + 1); abandoned reservations are not silently recycled.
-- The primitive is not imported or called by `gateway/app.py` and does not replace the SQLite payment store.
+- The primitive is not imported or called by `gateway/app.py` and does not replace the SQLite payment store. It remains a standalone prototype; the new ledger adapter uses its own linked reservation table.
 
 CI uses a real PostgreSQL 16 service. The integration tests spawn six independent processes to reserve nonces concurrently, reject duplicate request IDs, and verify a reservation remains allocated after constructing a new store instance. Verified run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44054246429 (32 Gateway tests passed; Docker image build succeeded).
+
+
+## Implemented slice: PostgreSQL payment-ledger adapter
+
+`gateway/postgres_ledger.py` adds an opt-in `PostgresPaymentStore` adapter with:
+- A durable `aevumpay_payments` table using TEXT for exact base-unit amounts, BYTEA for Fernet-encrypted signed transactions, and a durable authorization-consumed flag.
+- A linked `aevumpay_payment_nonce_reservations` table with a foreign key to the payment row and unique (chain, executor, nonce) and request ID constraints.
+- Per-chain/executor transaction-scoped advisory locks for nonce selection. Repeated reservation for the same payment/executor returns its existing nonce; a different executor binding is rejected.
+- Atomic persistence of the encrypted signed transaction and the reservation's SIGNED state.
+- An `AUTHORIZED_CONSUMED` transition that is rejected unless the exact signed transaction is already durable and its nonce reservation is in SIGNED state. Payment and reservation markers update in one transaction.
+- Terminal transaction bytes can be cleared while the nonce reservation remains as an audit record.
+
+GitHub Actions run `44533226045` on commit `2a5a90b9af812fdfcffc50f930b13e664945a147`: 38 Gateway tests passed against PostgreSQL 16 and the Docker image built successfully. Solidity CI also passed in run `44533226108`. The suite includes a five-process nonce-allocation test for the ledger adapter and a regression test that prevents consume marking before signed-transaction durability.
+
+**Important:** this adapter is not yet selected by configuration or used by `gateway/app.py`. SQLite remains the active runtime store, and its process-local `EXECUTION_LOCK` remains the actual execution coordination mechanism. Do not deploy multiple workers or replicas.
 
 ## Remaining PostgreSQL schema
 
@@ -44,7 +59,7 @@ Use BYTEA for encrypted raw_transaction and TIMESTAMPTZ for timestamps. Keep amo
 
 ### nonce_reservations
 
-The initial primitive currently has chain_id, executor_address, nonce, request_id, state and timestamps. The complete ledger still needs:
+The original standalone primitive table has chain_id, executor_address, nonce, request_id, state and timestamps. The linked ledger adapter table adds a payment foreign key and tx_hash. The complete execution integration still needs:
 - request_id TEXT NOT NULL UNIQUE REFERENCES payments(request_id)
 - tx_hash TEXT
 - explicit state transitions for RESERVED, SIGNED, AUTHORIZATION_CONSUMED, BROADCAST, CONFIRMED, REVERTED and MANUAL_REVIEW
