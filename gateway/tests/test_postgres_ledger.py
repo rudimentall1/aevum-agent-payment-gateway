@@ -3,6 +3,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
+import psycopg
 from fastapi import HTTPException
 from cryptography.fernet import Fernet
 
@@ -11,6 +12,11 @@ from gateway.postgres_ledger import PostgresPaymentStore
 
 DATABASE_URL = os.getenv("AEVUMPAY_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="PostgreSQL integration URL is not configured")
+
+
+def reset_ledger_tables():
+    with psycopg.connect(DATABASE_URL) as db:
+        db.execute("TRUNCATE aevumpay_payment_nonce_reservations, aevumpay_payments CASCADE")
 
 
 def payment(request_id="0x" + "11" * 32):
@@ -25,7 +31,7 @@ def payment(request_id="0x" + "11" * 32):
 def test_payment_record_is_durable_and_duplicate_request_is_rejected():
     key = Fernet.generate_key()
     store = PostgresPaymentStore(DATABASE_URL, key)
-    store.reset_for_test()
+    reset_ledger_tables()
     req = payment()
     store.reserve(req, 1_250_000)
 
