@@ -268,9 +268,13 @@ def verify_execution_authorization(
     authorization: dict[str, Any], public_key: Ed25519PublicKey, expected_action: dict[str, Any]
 ) -> None:
     try:
+        if not isinstance(authorization, dict):
+            raise ValueError("authorization envelope must be an object")
         if authorization.get("algorithm") != "Ed25519":
             raise ValueError("unsupported Verigate signature algorithm")
-        payload = authorization["payload"]
+        payload = authorization.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError("authorization payload must be an object")
         if payload.get("action") != expected_action:
             raise ValueError("Verigate authorized a different action or transaction")
         expected_action_sha256 = hashlib.sha256(json.dumps(
