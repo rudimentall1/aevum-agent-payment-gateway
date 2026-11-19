@@ -13,9 +13,9 @@ jobs:
       QDAY_RPC_URL: https://rpc-test.qday.info
       AEVUMPAY_CHAIN_ID: "44005"
       AEVUMPAY_TOKEN: "0x456569838f1d43009A91ebA4263147Afd7233483"
-      DEPLOYER_PRIVATE_KEY: \${{ secrets.AEVUMPAY_DEPLOYER_PRIVATE_KEY }}
-      AEVUMPAY_OWNER: \${{ secrets.AEVUMPAY_OWNER }}
-      AEVUMPAY_EXECUTOR: \${{ secrets.AEVUMPAY_EXECUTOR }}
+      DEPLOYER_PRIVATE_KEY: ${{ secrets.AEVUMPAY_DEPLOYER_PRIVATE_KEY }}
+      AEVUMPAY_OWNER: ${{ secrets.AEVUMPAY_OWNER }}
+      AEVUMPAY_EXECUTOR: ${{ secrets.AEVUMPAY_EXECUTOR }}
     steps:
       - uses: actions/checkout@v4
       - uses: foundry-rs/foundry-toolchain@v1
@@ -29,7 +29,7 @@ jobs:
           chain_id="$(cast chain-id --rpc-url "$QDAY_RPC_URL")"
           test "$chain_id" = "$AEVUMPAY_CHAIN_ID"
           deployer="$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY")"
-          test "\${deployer,,}" = "\${AEVUMPAY_OWNER,,}"
+          test "${deployer,,}" = "${AEVUMPAY_OWNER,,}"
           token_code="$(cast code "$AEVUMPAY_TOKEN" --rpc-url "$QDAY_RPC_URL")"
           test "$token_code" != "0x"
           decimals="$(cast call "$AEVUMPAY_TOKEN" "decimals()(uint8)" --rpc-url "$QDAY_RPC_URL")"
@@ -65,8 +65,8 @@ jobs:
           actual_owner="$(cast call "$router_address" "owner()(address)" --rpc-url "$QDAY_RPC_URL")"
           actual_executor="$(cast call "$router_address" "executor()(address)" --rpc-url "$QDAY_RPC_URL")"
           token_enabled="$(cast call "$router_address" "supportedTokens(address)(bool)" "$AEVUMPAY_TOKEN" --rpc-url "$QDAY_RPC_URL")"
-          test "\${actual_owner,,}" = "\${AEVUMPAY_OWNER,,}"
-          test "\${actual_executor,,}" = "\${AEVUMPAY_EXECUTOR,,}"
+          test "${actual_owner,,}" = "${AEVUMPAY_OWNER,,}"
+          test "${actual_executor,,}" = "${AEVUMPAY_EXECUTOR,,}"
           test "$token_enabled" = "true"
           {
             echo "## AevumPay testnet deployment"
