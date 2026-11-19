@@ -238,7 +238,3 @@ class PostgresPaymentStore:
             ).fetchone()
             return dict(row) if row else None
 
-    def reset_for_test(self) -> None:
-        """Test helper; use only with a dedicated disposable database."""
-        with self._connect() as db:
-            db.execute("TRUNCATE aevumpay_payment_nonce_reservations, aevumpay_payments CASCADE")
