@@ -164,14 +164,45 @@ class PostgresPaymentStore:
         tx_hash: str | None = None, detail: str | None = None,
     ) -> None:
         now = int(time.time())
+        normalized_id = request_id.lower()
         with self._connect() as db:
+            if status == "AUTHORIZED_CONSUMED":
+                payment = db.execute(
+                    """SELECT raw_transaction FROM aevumpay_payments
+                       WHERE request_id=%s FOR UPDATE""",
+                    (normalized_id,),
+                ).fetchone()
+                if payment is None:
+                    raise ValueError("payment does not exist")
+                if payment["raw_transaction"] is None:
+                    raise ValueError("cannot consume authorization before signed transaction is durable")
+                reservation = db.execute(
+                    """SELECT state FROM aevumpay_payment_nonce_reservations
+                       WHERE request_id=%s FOR UPDATE""",
+                    (normalized_id,),
+                ).fetchone()
+                if reservation is None or reservation["state"] != "SIGNED":
+                    raise ValueError("signed nonce reservation is not durable")
+                db.execute(
+                    """UPDATE aevumpay_payments SET status=%s,
+                       tx_hash=COALESCE(%s, tx_hash), detail=%s,
+                       authorization_consumed=TRUE, updated_at=%s
+                       WHERE request_id=%s""",
+                    (status, tx_hash, detail, now, normalized_id),
+                )
+                db.execute(
+                    """UPDATE aevumpay_payment_nonce_reservations
+                       SET state=%s, tx_hash=COALESCE(%s, tx_hash), updated_at=%s
+                       WHERE request_id=%s""",
+                    (status, tx_hash, now, normalized_id),
+                )
+                return
+
             updated = db.execute(
                 """UPDATE aevumpay_payments SET status=%s,
-                   tx_hash=COALESCE(%s, tx_hash), detail=%s,
-                   authorization_consumed=CASE WHEN %s='AUTHORIZED_CONSUMED'
-                       THEN TRUE ELSE authorization_consumed END,
-                   updated_at=%s WHERE request_id=%s RETURNING request_id""",
-                (status, tx_hash, detail, status, now, request_id.lower()),
+                   tx_hash=COALESCE(%s, tx_hash), detail=%s, updated_at=%s
+                   WHERE request_id=%s RETURNING request_id""",
+                (status, tx_hash, detail, now, normalized_id),
             ).fetchone()
             if updated is None:
                 raise ValueError("payment does not exist")
@@ -179,7 +210,7 @@ class PostgresPaymentStore:
                 """UPDATE aevumpay_payment_nonce_reservations
                    SET state=%s, tx_hash=COALESCE(%s, tx_hash), updated_at=%s
                    WHERE request_id=%s""",
-                (status, tx_hash, now, request_id.lower()),
+                (status, tx_hash, now, normalized_id),
             )
 
     def clear_signed_transaction(self, request_id: str) -> None:
