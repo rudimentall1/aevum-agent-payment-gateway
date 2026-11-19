@@ -243,3 +243,51 @@ def test_postgres_reconcile_after_store_restart_broadcasts_identical_signed_byte
     assert restarted.get(req.request_id)["authorization_consumed"] is True
     assert restarted.get(req.request_id)["raw_transaction"] is None
     assert restarted.get_nonce_reservation(req.request_id)["state"] == "CONFIRMED"
+
+
+def test_rejected_unconsumed_payment_releases_nonce_for_reuse_without_overwriting_audit():
+    key = Fernet.generate_key()
+    store = PostgresPaymentStore(DATABASE_URL, key)
+    reset_ledger_tables()
+    executor = "0x000000000000000000000000000000000000aE07"
+
+    rejected = payment("0x" + "77" * 32)
+    later = payment("0x" + "88" * 32)
+    retry = payment("0x" + "99" * 32)
+    for req in (rejected, later, retry):
+        store.reserve(req, 10)
+
+    rejected_nonce = store.reserve_nonce(44005, executor, 17, rejected.request_id)
+    later_nonce = store.reserve_nonce(44005, executor, 17, later.request_id)
+    assert (rejected_nonce, later_nonce) == (17, 18)
+
+    store.set_signed_transaction(
+        rejected.request_id, "0x" + "ab" * 32, b"rejected-signed-bytes",
+        44005, executor, rejected_nonce,
+    )
+    store.update(rejected.request_id, "REJECTED", detail="Verigate denied before consume")
+    store.release_nonce_reservation(rejected.request_id)
+    store.clear_signed_transaction(rejected.request_id)
+
+    retry_nonce = store.reserve_nonce(44005, executor, 17, retry.request_id)
+    assert retry_nonce == 17
+    assert store.get_nonce_reservation(rejected.request_id)["state"] == "ABANDONED"
+    assert store.get_nonce_reservation(later.request_id)["nonce"] == 18
+
+
+def test_consumed_nonce_reservation_cannot_be_released():
+    key = Fernet.generate_key()
+    store = PostgresPaymentStore(DATABASE_URL, key)
+    reset_ledger_tables()
+    req = payment("0x" + "aa" * 32)
+    executor = "0x000000000000000000000000000000000000aE08"
+    store.reserve(req, 10)
+    nonce = store.reserve_nonce(44005, executor, 23, req.request_id)
+    store.set_signed_transaction(
+        req.request_id, "0x" + "cd" * 32, b"consumed-signed-bytes",
+        44005, executor, nonce,
+    )
+    store.update(req.request_id, "AUTHORIZED_CONSUMED")
+
+    with pytest.raises(ValueError, match="consumed"):
+        store.release_nonce_reservation(req.request_id)
