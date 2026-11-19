@@ -1,6 +1,6 @@
 # PostgreSQL Ledger and Nonce Coordination
 
-Status: partial implementation. A standalone nonce primitive and a separate PostgreSQL payment-ledger adapter are implemented and CI-tested against PostgreSQL 16. The adapter is not wired into the HTTP execution path; transactional payment persistence exists inside the adapter, but end-to-end Gateway execution, crash recovery and reconciliation against this shared ledger are not yet implemented. PostgreSQL mode is not production-ready and must not be used to enable multiple Gateway replicas.
+Status: partial implementation. The PostgreSQL payment-ledger adapter is wired into `gateway/app.py` as an explicit opt-in runtime backend via `AEVUMPAY_DATABASE_URL`. The Gateway obtains the RPC pending nonce, reserves a unique nonce in PostgreSQL, and persists the encrypted signed transaction together with the matching reservation before Verigate consume. The atomic consume marker and reservation transition are also handled by the adapter. However, end-to-end cross-process crash/restart and reconciliation acceptance tests are still missing. PostgreSQL mode remains experimental; do not enable multiple Gateway workers or replicas yet.
 
 ## Goal
 
@@ -24,7 +24,7 @@ Allow more than one Gateway process to share payment state without allowing two 
 - Durable unique constraint on (chain_id, executor_address, nonce).
 - Globally unique request ID constraint.
 - Conservative allocation from max(pending_nonce, highest_reserved_nonce + 1); abandoned reservations are not silently recycled.
-- The primitive is not imported or called by `gateway/app.py` and does not replace the SQLite payment store. It remains a standalone prototype; the new ledger adapter uses its own linked reservation table.
+- The primitive remains a standalone prototype and is not used by `gateway/app.py`; runtime execution uses the linked reservation table in `PostgresPaymentStore` instead.
 
 CI uses a real PostgreSQL 16 service. The integration tests spawn six independent processes to reserve nonces concurrently, reject duplicate request IDs, and verify a reservation remains allocated after constructing a new store instance. Verified run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44054246429 (32 Gateway tests passed; Docker image build succeeded).
 
@@ -41,7 +41,7 @@ CI uses a real PostgreSQL 16 service. The integration tests spawn six independen
 
 GitHub Actions run `44533226045` on commit `2a5a90b9af812fdfcffc50f930b13e664945a147`: 38 Gateway tests passed against PostgreSQL 16 and the Docker image built successfully. Solidity CI also passed in run `44533226108`. The suite includes a five-process nonce-allocation test for the ledger adapter and a regression test that prevents consume marking before signed-transaction durability.
 
-**Important:** this adapter is not yet selected by configuration or used by `gateway/app.py`. SQLite remains the active runtime store, and its process-local `EXECUTION_LOCK` remains the actual execution coordination mechanism. Do not deploy multiple workers or replicas.
+**Runtime wiring:** `create_payment_store()` selects `PostgresPaymentStore` only when `AEVUMPAY_DATABASE_URL` is non-empty; otherwise it retains SQLite. `preflight_transaction()` asks PostgreSQL to reserve the RPC pending nonce under a per-chain/executor advisory transaction lock, and `set_signed_transaction()` atomically persists the encrypted raw transaction and matching reservation state. The SQLite path continues to use the pending RPC nonce and its existing process-local lock. The Gateway's `EXECUTION_LOCK` is still process-local; PostgreSQL's durable unique nonce reservations coordinate nonce allocation across processes, but the complete multi-process execution and crash-recovery lifecycle has not yet been validated. Do not deploy multiple workers or replicas.
 
 ## Remaining PostgreSQL schema
 
@@ -69,15 +69,15 @@ The schema must be migrated carefully from the current primitive table without d
 
 ## Execution protocol
 
-1. Begin a PostgreSQL transaction and acquire a transaction-scoped advisory lock keyed by chain ID and normalized executor address.
-2. Read the chain pending nonce while holding the lock.
-3. Select the first nonce not already present in nonce_reservations for this chain and executor, starting at the chain pending nonce.
-4. Insert the reservation with a unique constraint. A conflict means retry the reservation transaction; never ignore the conflict.
+1. Read the RPC pending nonce for the configured executor.
+2. Begin a PostgreSQL transaction and acquire a transaction-scoped advisory lock keyed by chain ID and normalized executor address.
+3. Select `max(pending_nonce, highest_reserved_nonce + 1)` for this chain and executor; the shared reservation table prevents two Gateway processes from claiming the same nonce. This assumes the configured executor is not concurrently used by an external signer outside this ledger.
+4. Insert the reservation with its unique constraint and commit. A duplicate request ID returns its existing reservation only for the same executor; a conflicting executor binding is rejected.
 5. Sign the transaction with the reserved nonce.
 6. Persist the encrypted exact raw transaction and its hash in payments, and transition the reservation to SIGNED in one database transaction.
-7. Commit the reservation and release the advisory lock before making the Verigate HTTP request. The durable unique reservation prevents another replica from reusing the nonce.
-8. After Verigate consume returns execute=true, atomically set payments.authorization_consumed and nonce_reservations.state=AUTHORIZATION_CONSUMED.
-9. Broadcast only the persisted signed bytes. Record BROADCAST/PENDING/terminal state as evidence arrives.
+7. Only after durable persistence, make the Verigate authorize/consume requests.
+8. After Verigate consume returns execute=true, atomically set payments.authorization_consumed and nonce_reservations.state=AUTHORIZED_CONSUMED.
+9. Broadcast only the persisted signed bytes. Record SUBMITTING/PENDING/terminal state as evidence arrives.
 10. Reconciliation reads the shared ledger and chain. It may rebroadcast only the same signed bytes and only after durable consume confirmation.
 
 The advisory lock protects nonce selection and reservation. The unique database constraint is the final concurrency guard. The durable reservation, not a long-lived network lock, protects the nonce across process crashes and database connection loss.
@@ -94,7 +94,7 @@ The advisory lock protects nonce selection and reservation. The unique database 
 
 ## Migration and rollout
 
-- Add PostgreSQL as an opt-in backend selected by DATABASE_URL; do not silently change existing SQLite deployments.
+- PostgreSQL is selected as an opt-in backend by `AEVUMPAY_DATABASE_URL`; do not silently change existing SQLite deployments.
 - Keep SQLite behavior and its process-local lock unchanged.
 - Do not enable multiple workers or replicas until the PostgreSQL integration tests pass.
 - Do not attempt an automatic SQLite-to-PostgreSQL production migration in this slice. A separate explicit export/import tool can be added only if an existing deployment needs it.
