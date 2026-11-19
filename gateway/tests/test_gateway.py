@@ -694,3 +694,58 @@ def test_reconcile_after_restart_rebroadcasts_identical_bytes_and_confirms(monke
     record = restarted_store.get(request_id)
     assert record["authorization_consumed"] == 1
     assert record["raw_transaction"] is None
+
+
+def test_postgres_nonce_reservation_uses_shared_ledger_allocation():
+    class FakeEth:
+        def get_transaction_count(self, address, block):
+            assert address == "0x000000000000000000000000000000000000aE01"
+            assert block == "pending"
+            return 5
+
+    class FakeWeb3:
+        eth = FakeEth()
+
+    class FakeStore:
+        def __init__(self):
+            self.calls = []
+
+        def reserve_nonce(self, chain_id, executor_address, pending_nonce, request_id):
+            self.calls.append((chain_id, executor_address, pending_nonce, request_id))
+            return 9
+
+    store = FakeStore()
+    nonce = gateway_app.reserve_transaction_nonce(
+        FakeWeb3(),
+        "0x000000000000000000000000000000000000aE01",
+        "0x" + "ab" * 32,
+        store,
+    )
+
+    assert nonce == 9
+    assert store.calls == [(
+        gateway_app.CHAIN_ID,
+        "0x000000000000000000000000000000000000aE01",
+        5,
+        "0x" + "ab" * 32,
+    )]
+
+
+def test_sqlite_nonce_path_keeps_pending_rpc_nonce():
+    class FakeEth:
+        def get_transaction_count(self, _address, block):
+            assert block == "pending"
+            return 12
+
+    class FakeWeb3:
+        eth = FakeEth()
+
+    store = PaymentStore(":memory:", encryption_key=Fernet.generate_key())
+    nonce = gateway_app.reserve_transaction_nonce(
+        FakeWeb3(),
+        "0x000000000000000000000000000000000000aE01",
+        "0x" + "cd" * 32,
+        store,
+    )
+
+    assert nonce == 12
