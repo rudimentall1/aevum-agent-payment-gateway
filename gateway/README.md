@@ -2,7 +2,7 @@
 
 ## Status
 
-The Gateway is a fail-closed FastAPI service that prepares an exact EIP-712 payer envelope, verifies the agent's Ed25519 ActionIntent authorization through Verigate, and submits the matching Aevum router transaction. SQLite remains the default ledger. An opt-in PostgreSQL payment ledger is now wired into runtime selection and transaction nonce reservation; its full cross-process crash/recovery behavior is not yet acceptance-tested.
+The Gateway is a fail-closed FastAPI service that prepares an exact EIP-712 payer envelope, verifies the agent's Ed25519 ActionIntent authorization through Verigate, and submits the matching Aevum router transaction. SQLite remains the default ledger. Setting `AEVUMPAY_DATABASE_URL` selects the opt-in PostgreSQL payment ledger, including durable nonce reservations, encrypted signed-transaction persistence and consume-marker state transitions. PostgreSQL nonce reservations are concurrency-tested; full multi-process execution and crash/recovery behavior are not yet acceptance-tested.
 
 The gateway has not yet been integration-tested against a live Verigate instance or Aevum RPC. The router is merged and its Solidity CI is green; live deployment is still pending.
 
@@ -24,9 +24,9 @@ Set these environment variables in the runtime environment. Do not commit secret
 | `AEVUMPAY_TOKEN_DECIMALS` | No | Defaults to 6 |
 | `AEVUMPAY_CHAIN_ID` | No | Defaults to 44005 |
 | `AEVUMPAY_DB` | No | SQLite path; defaults to `data/aevumpay-gateway.db` |
-| `AEVUMPAY_DATABASE_URL` | No | PostgreSQL connection URL; when set, selects the shared PostgreSQL payment ledger instead of SQLite |
+| `AEVUMPAY_DATABASE_URL` | No | PostgreSQL connection URL; when set, selects the shared PostgreSQL payment ledger instead of SQLite |\n| `AEVUMPAY_TX_ENCRYPTION_KEY` | Required for payments | Fernet key used to encrypt persisted signed transaction bytes in either ledger |
 
-The issuer public key must be provisioned out-of-band and pinned at `VERIGATE_PUBLIC_KEY_PATH`. Do not fetch and trust a new issuer key for every payment.
+The issuer public key must be provisioned out-of-band and pinned at `VERIGATE_PUBLIC_KEY_PATH`. Do not fetch and trust a new issuer key for every payment. When PostgreSQL is enabled, also set `AEVUMPAY_TX_ENCRYPTION_KEY` to a Fernet key; the same key must remain stable across Gateway restarts.
 
 ## Run locally
 
@@ -45,8 +45,9 @@ Health check: `GET /health`.
 2. Client calls `POST /v1/payments/prepare` with the payer signature; it returns the canonical ActionIntent payload.
 3. Client signs that payload with the Ed25519 key corresponding to the registered Verigate identity.
 4. Client submits both signatures to `POST /v1/payments/execute`.
-4. Gateway authorizes and consumes the exact action through Verigate.
-5. Gateway submits the same router calldata to Aevum and records the receipt.
+5. Gateway obtains Verigate ALLOW, verifies the pinned execution authorization, performs on-chain preflight, signs and durably stores the exact transaction bytes.
+6. Gateway consumes the exact authorization through Verigate. Only `execute=true` permits broadcast.
+7. Gateway broadcasts the stored bytes and verifies the receipt plus exact Transfer and PaymentExecuted events.
 
 The payer must have approved the router to spend the required tUSD8 amount before execution. The gateway checks balance and allowance but does not create an approval transaction.
 
