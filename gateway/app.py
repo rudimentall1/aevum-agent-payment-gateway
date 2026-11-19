@@ -609,7 +609,14 @@ def authorize_and_consume(req: ExecuteRequest, action: dict[str, Any], preflight
             if result.get("execute") is not True:
                 raise HTTPException(status_code=403, detail="Verigate execution authorization was not consumed")
             return authorization
-    except HTTPException:
+    except HTTPException as exc:
+        if not consume_started and exc.status_code >= 500:
+            # A preflight failure occurs before the consume request. It is
+            # safe to abandon its nonce reservation and must not strand a gap.
+            raise HTTPException(
+                status_code=424,
+                detail="Verigate authorization or transaction preflight failed before consume",
+            ) from exc
         raise
     except Exception as exc:
         # Before consume starts, no execution authority can have been consumed;
@@ -775,8 +782,23 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
             status = "UNKNOWN_REQUIRES_RECONCILIATION" if exc.status_code >= 500 else "REJECTED"
             store.update(request_id, status, detail=str(exc.detail))
             if status == "REJECTED":
-                # A deterministic pre-consume failure or explicit Verigate denial
-                # cannot authorize broadcasting this signed transaction. Discard it.
+                # A deterministic pre-consume failure or explicit non-executable
+                # Verigate decision cannot authorize a broadcast. Release the
+                # durable nonce so it cannot strand all later executor transactions.
+                release_nonce = getattr(store, "release_nonce_reservation", None)
+                if callable(release_nonce):
+                    try:
+                        release_nonce(request_id)
+                    except Exception as release_exc:
+                        store.update(
+                            request_id,
+                            "UNKNOWN_REQUIRES_RECONCILIATION",
+                            detail="safe nonce release failed; manual review required",
+                        )
+                        raise HTTPException(
+                            status_code=500,
+                            detail="payment rejected but nonce reservation could not be safely released",
+                        ) from release_exc
                 store.clear_signed_transaction(request_id)
             raise
         except Exception as exc:
