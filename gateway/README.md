@@ -2,7 +2,7 @@
 
 ## Status
 
-Initial gateway implementation is present. It is a fail-closed FastAPI service that prepares an exact EIP-712 payer envelope, obtains the agent's Ed25519 ActionIntent signature, calls Verigate authorize and consume, then submits the matching Aevum router transaction.
+The Gateway is a fail-closed FastAPI service that prepares an exact EIP-712 payer envelope, verifies the agent's Ed25519 ActionIntent authorization through Verigate, and submits the matching Aevum router transaction. SQLite remains the default ledger. An opt-in PostgreSQL payment ledger is now wired into runtime selection and transaction nonce reservation; its full cross-process crash/recovery behavior is not yet acceptance-tested.
 
 The gateway has not yet been integration-tested against a live Verigate instance or Aevum RPC. The router is merged and its Solidity CI is green; live deployment is still pending.
 
@@ -23,7 +23,8 @@ Set these environment variables in the runtime environment. Do not commit secret
 | `AEVUMPAY_TOKEN` | No | Defaults to the documented tUSD8 test token |
 | `AEVUMPAY_TOKEN_DECIMALS` | No | Defaults to 6 |
 | `AEVUMPAY_CHAIN_ID` | No | Defaults to 44005 |
-| `AEVUMPAY_DB` | No | Defaults to `data/aevumpay-gateway.db` |
+| `AEVUMPAY_DB` | No | SQLite path; defaults to `data/aevumpay-gateway.db` |
+| `AEVUMPAY_DATABASE_URL` | No | PostgreSQL connection URL; when set, selects the shared PostgreSQL payment ledger instead of SQLite |
 
 The issuer public key must be provisioned out-of-band and pinned at `VERIGATE_PUBLIC_KEY_PATH`. Do not fetch and trust a new issuer key for every payment.
 
@@ -55,7 +56,8 @@ The payer must have approved the router to spend the required tUSD8 amount befor
 - Decimal amounts are strings and converted exactly to token base units.
 - Verigate issuer signatures are verified locally against the pinned Ed25519 public key.
 - No EVM transaction is submitted unless Verigate returns ALLOW, the execution authorization verifies, and consume returns `execute=true`.
-- Duplicate request IDs are rejected using a local SQLite ledger.
+- Duplicate request IDs are rejected by the selected ledger: SQLite by default, or PostgreSQL when `AEVUMPAY_DATABASE_URL` is configured.
+- PostgreSQL mode reserves executor nonces in the shared ledger and atomically persists the encrypted signed transaction with its nonce reservation before Verigate consume. Keep PostgreSQL mode experimental; do not enable multiple workers or replicas until cross-process crash/restart and reconciliation tests pass.
 - A timeout after Verigate consumption is an ambiguous state. The gateway preserves a transaction hash when one can be derived or broadcast. Never blindly retry; inspect the ledger and chain first.
 - A consumed Verigate authorization is single-use. If broadcast fails, a fresh authorization/request ID is required after reconciliation.
 - The gateway currently assumes the Aevum testnet router and tUSD8 configuration. It is not production-ready until live RPC, Verigate, deployment and end-to-end tests pass.

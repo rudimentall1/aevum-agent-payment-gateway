@@ -554,7 +554,7 @@ def test_payment_execution_serializes_nonce_preflight_across_requests(monkeypatc
     def fake_prepare_payment(req):
         return ({}, {"action_type": "payment"}, 100, "0x1234", req.request_id)
 
-    def fake_preflight(req, amount_units, request_id):
+    def fake_preflight(req, amount_units, request_id, payment_store=None):
         nonlocal preflight_calls
         with call_lock:
             preflight_calls += 1
@@ -694,3 +694,98 @@ def test_reconcile_after_restart_rebroadcasts_identical_bytes_and_confirms(monke
     record = restarted_store.get(request_id)
     assert record["authorization_consumed"] == 1
     assert record["raw_transaction"] is None
+
+
+def test_postgres_nonce_reservation_uses_shared_ledger_allocation():
+    class FakeEth:
+        def get_transaction_count(self, address, block):
+            assert address == "0x000000000000000000000000000000000000aE01"
+            assert block == "pending"
+            return 5
+
+    class FakeWeb3:
+        eth = FakeEth()
+
+    class FakeStore:
+        def __init__(self):
+            self.calls = []
+
+        def reserve_nonce(self, chain_id, executor_address, pending_nonce, request_id):
+            self.calls.append((chain_id, executor_address, pending_nonce, request_id))
+            return 9
+
+    store = FakeStore()
+    nonce = gateway_app.reserve_transaction_nonce(
+        FakeWeb3(),
+        "0x000000000000000000000000000000000000aE01",
+        "0x" + "ab" * 32,
+        store,
+    )
+
+    assert nonce == 9
+    assert store.calls == [(
+        gateway_app.CHAIN_ID,
+        "0x000000000000000000000000000000000000aE01",
+        5,
+        "0x" + "ab" * 32,
+    )]
+
+
+def test_sqlite_nonce_path_keeps_pending_rpc_nonce():
+    class FakeEth:
+        def get_transaction_count(self, _address, block):
+            assert block == "pending"
+            return 12
+
+    class FakeWeb3:
+        eth = FakeEth()
+
+    store = PaymentStore(":memory:", encryption_key=Fernet.generate_key())
+    nonce = gateway_app.reserve_transaction_nonce(
+        FakeWeb3(),
+        "0x000000000000000000000000000000000000aE01",
+        "0x" + "cd" * 32,
+        store,
+    )
+
+    assert nonce == 12
+
+
+def test_create_payment_store_selects_postgres_only_when_explicitly_configured(monkeypatch, tmp_path):
+    sentinel = object()
+    calls = []
+
+    def fake_postgres_store(database_url, encryption_key):
+        calls.append((database_url, encryption_key))
+        return sentinel
+
+    encryption_key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setenv("AEVUMPAY_DATABASE_URL", "postgresql://gateway/db")
+    monkeypatch.setattr(gateway_app, "TX_ENCRYPTION_KEY", encryption_key)
+    monkeypatch.setattr(gateway_app, "PostgresPaymentStore", fake_postgres_store)
+
+    assert gateway_app.create_payment_store() is sentinel
+    assert calls == [("postgresql://gateway/db", encryption_key)]
+
+    monkeypatch.delenv("AEVUMPAY_DATABASE_URL")
+    monkeypatch.setattr(gateway_app, "DB_PATH", str(tmp_path / "default.sqlite"))
+    assert isinstance(gateway_app.create_payment_store(), PaymentStore)
+
+
+def test_execution_authorization_rejects_non_object_envelopes():
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    authorization, public_key, _ = _signed_verigate_authorization(action)
+
+    for malformed in (None, [], "not-an-object"):
+        with pytest.raises(ValueError, match="invalid or mismatched"):
+            gateway_app.verify_execution_authorization(malformed, public_key, action)
+
+
+def test_execution_authorization_rejects_non_object_payloads():
+    action = {"action_type": "payment", "amount_exact": "1.250000"}
+    authorization, public_key, _ = _signed_verigate_authorization(action)
+
+    for malformed_payload in (None, [], "not-an-object"):
+        malformed = {**authorization, "payload": malformed_payload}
+        with pytest.raises(ValueError, match="invalid or mismatched"):
+            gateway_app.verify_execution_authorization(malformed, public_key, action)
