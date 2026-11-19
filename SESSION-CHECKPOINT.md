@@ -118,3 +118,18 @@ At the beginning of every session:
 - The primitive is deliberately not wired into `gateway/app.py`; current SQLite payment execution and its one-worker/one-replica constraint remain unchanged.
 - The design document's status is updated to distinguish the implemented nonce primitive from the still-unimplemented PostgreSQL payment ledger.
 - Next bounded work: implement the PostgreSQL payment-ledger adapter and state transitions with crash-recovery tests before changing the payment execution path. Keep `main` untouched.
+
+
+## Session update — 2026-11-19 (PostgreSQL payment-ledger adapter)
+
+- Re-read this checkpoint first and verified the repository state. Work remains isolated on `feat/postgres-ledger`; `main` was not modified.
+- Implemented `gateway/postgres_ledger.py` with `PostgresPaymentStore`: durable payment rows, Fernet-encrypted signed transaction bytes, a linked nonce-reservation table, per-chain/executor advisory locking, and atomic persistence of signed transaction + reservation state.
+- Added an authorization-consumed guard: `AUTHORIZED_CONSUMED` cannot be committed unless signed transaction bytes are already durable and the matching nonce reservation is in `SIGNED` state. Both payment and nonce state changes occur in one PostgreSQL transaction.
+- Added PostgreSQL 16 integration tests for persistence across store instances, duplicate request IDs, idempotent reservation lookup, nonce allocation across five independent processes, encrypted raw transaction persistence, consume-marker atomicity and nonce audit retention after clearing transaction bytes.
+- TDD evidence: the new consume-marker regression test failed before the production guard was added; the expected failure was `DID NOT RAISE ValueError`. After implementation, Gateway CI passed on commit `2a5a90b9af812fdfcffc50f930b13e664945a147`: **38 passed**, Docker image build succeeded. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44533226045.
+- Solidity CI passed on the same code commit: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44533226108.
+- Removed destructive `reset_for_test()` methods from both production PostgreSQL store classes; tests now perform table cleanup directly against the dedicated CI database. This cleanup is committed after the green code commit; its latest CI is pending and must be verified before treating the branch HEAD as fully green.
+- Updated `docs/POSTGRES_LEDGER_DESIGN.md` to distinguish the implemented adapter from the still-missing Gateway execution integration.
+- **Not yet integrated:** `gateway/app.py` still uses SQLite `PaymentStore` and the process-local `EXECUTION_LOCK`. The PostgreSQL adapter is not wired into payment execution, so multi-worker/multi-replica operation remains unsupported.
+- No live Verigate, Aevum RPC, contract deployment, testnet payment, or cross-replica crash-recovery flow was exercised.
+- Next: verify CI for the cleanup commits; add crash/restart tests against the PostgreSQL ledger itself; then design the explicit runtime backend selection and wire nonce reservation into preflight/sign/persist/consume/broadcast/reconcile without changing the SQLite default. Keep `main` untouched.
