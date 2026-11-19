@@ -736,14 +736,19 @@ def execute(req: ExecuteRequest) -> dict[str, Any]:
         def prepare_and_persist():
             nonlocal prepared
             prepared = preflight_transaction(req, amount_units, request_id, store)
-            store.set_signed_transaction(
-                request_id,
-                prepared["transaction_hash"],
-                prepared["raw_transaction"],
-                CHAIN_ID,
-                prepared["executor_address"],
-                prepared["nonce"],
-            )
+            if callable(getattr(store, "reserve_nonce", None)):
+                store.set_signed_transaction(
+                    request_id,
+                    prepared["transaction_hash"],
+                    prepared["raw_transaction"],
+                    CHAIN_ID,
+                    prepared["executor_address"],
+                    prepared["nonce"],
+                )
+            else:
+                store.set_signed_transaction(
+                    request_id, prepared["transaction_hash"], prepared["raw_transaction"]
+                )
         try:
             authorization = authorize_and_consume(
                 req, action, preflight=prepare_and_persist,
