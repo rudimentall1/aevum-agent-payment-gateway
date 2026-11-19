@@ -6,6 +6,9 @@ import pytest
 import psycopg
 from fastapi import HTTPException
 from cryptography.fernet import Fernet
+from web3 import Web3 as RealWeb3
+
+import gateway.app as gateway_app
 
 from gateway.postgres_ledger import PostgresPaymentStore
 
@@ -150,3 +153,93 @@ def test_consume_marker_cannot_be_written_without_durable_signed_transaction():
     record = store.get(req.request_id)
     assert record["authorization_consumed"] is False
     assert record["status"] == "AUTHORIZING"
+
+
+def test_postgres_reconcile_refuses_broadcast_until_consume_marker_is_durable(monkeypatch):
+    key = Fernet.generate_key()
+    store = PostgresPaymentStore(DATABASE_URL, key)
+    reset_ledger_tables()
+    req = payment("0x" + "55" * 32)
+    executor = "0x000000000000000000000000000000000000aE05"
+    store.reserve(req, 123)
+    nonce = store.reserve_nonce(44005, executor, 22, req.request_id)
+    raw = b"postgres-signed-transaction"
+    tx_hash = RealWeb3.keccak(raw).hex()
+    store.set_signed_transaction(req.request_id, tx_hash, raw, 44005, executor, nonce)
+    monkeypatch.setattr(gateway_app, "store", store)
+
+    rpc_attempts = []
+
+    class ForbiddenRpc:
+        def __init__(self, *_args, **_kwargs):
+            rpc_attempts.append(True)
+
+    monkeypatch.setattr(gateway_app, "Web3", ForbiddenRpc)
+    with pytest.raises(gateway_app.HTTPException) as exc:
+        gateway_app.reconcile_payment(req.request_id)
+
+    assert exc.value.status_code == 409
+    assert rpc_attempts == []
+    assert store.get(req.request_id)["authorization_consumed"] is False
+
+
+def test_postgres_reconcile_after_store_restart_broadcasts_identical_signed_bytes(monkeypatch):
+    key = Fernet.generate_key()
+    store = PostgresPaymentStore(DATABASE_URL, key)
+    reset_ledger_tables()
+    req = payment("0x" + "66" * 32)
+    executor = "0x000000000000000000000000000000000000aE06"
+    store.reserve(req, 456)
+    nonce = store.reserve_nonce(44005, executor, 28, req.request_id)
+    raw = b"postgres-exact-signed-transaction"
+    tx_hash = RealWeb3.keccak(raw).hex()
+    store.set_signed_transaction(req.request_id, tx_hash, raw, 44005, executor, nonce)
+    store.update(req.request_id, "AUTHORIZED_CONSUMED")
+
+    restarted = PostgresPaymentStore(DATABASE_URL, key)
+    monkeypatch.setattr(gateway_app, "store", restarted)
+    broadcasts = []
+
+    class FakeEth:
+        chain_id = gateway_app.CHAIN_ID
+
+        def send_raw_transaction(self, transaction):
+            broadcasts.append(bytes(transaction))
+            return type("TxHash", (), {"hex": lambda self: tx_hash})()
+
+        def wait_for_transaction_receipt(self, _tx_hash, timeout):
+            assert timeout >= 60
+            return SimpleNamespace(status=1, logs=[])
+
+    fake_eth = FakeEth()
+
+    class FakeWeb3:
+        def __init__(self, *_args, **_kwargs):
+            self.eth = fake_eth
+
+        def is_connected(self):
+            return True
+
+        @staticmethod
+        def HTTPProvider(*_args, **_kwargs):
+            return object()
+
+        @staticmethod
+        def keccak(value):
+            return RealWeb3.keccak(value)
+
+        @staticmethod
+        def to_bytes(hexstr):
+            return bytes.fromhex(hexstr[2:])
+
+    monkeypatch.setattr(gateway_app, "Web3", FakeWeb3)
+    monkeypatch.setattr(gateway_app, "verify_payment_events", lambda *_args: True)
+
+    result = gateway_app.reconcile_payment(req.request_id)
+
+    assert broadcasts == [raw]
+    assert result["status"] == "CONFIRMED"
+    assert result["tx_hash"] == tx_hash
+    assert restarted.get(req.request_id)["authorization_consumed"] is True
+    assert restarted.get(req.request_id)["raw_transaction"] is None
+    assert restarted.get_nonce_reservation(req.request_id)["state"] == "CONFIRMED"
