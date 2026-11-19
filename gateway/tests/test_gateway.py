@@ -554,7 +554,7 @@ def test_payment_execution_serializes_nonce_preflight_across_requests(monkeypatc
     def fake_prepare_payment(req):
         return ({}, {"action_type": "payment"}, 100, "0x1234", req.request_id)
 
-    def fake_preflight(req, amount_units, request_id):
+    def fake_preflight(req, amount_units, request_id, payment_store=None):
         nonlocal preflight_calls
         with call_lock:
             preflight_calls += 1
@@ -749,3 +749,23 @@ def test_sqlite_nonce_path_keeps_pending_rpc_nonce():
     )
 
     assert nonce == 12
+
+
+def test_create_payment_store_selects_postgres_only_when_explicitly_configured(monkeypatch, tmp_path):
+    sentinel = object()
+    calls = []
+
+    def fake_postgres_store(database_url, encryption_key):
+        calls.append((database_url, encryption_key))
+        return sentinel
+
+    monkeypatch.setenv("AEVUMPAY_DATABASE_URL", "postgresql://gateway/db")
+    monkeypatch.setattr(gateway_app, "TX_ENCRYPTION_KEY", "test-fernet-key")
+    monkeypatch.setattr(gateway_app, "PostgresPaymentStore", fake_postgres_store)
+
+    assert gateway_app.create_payment_store() is sentinel
+    assert calls == [("postgresql://gateway/db", "test-fernet-key")]
+
+    monkeypatch.delenv("AEVUMPAY_DATABASE_URL")
+    monkeypatch.setattr(gateway_app, "DB_PATH", str(tmp_path / "default.sqlite"))
+    assert isinstance(gateway_app.create_payment_store(), PaymentStore)
