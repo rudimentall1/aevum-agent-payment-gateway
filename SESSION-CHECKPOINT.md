@@ -163,3 +163,24 @@ At the beginning of every session:
 - Stale PR #3 was closed as superseded by PR #4; no changes were lost because its malformed-envelope hardening is covered by the merged implementation and regression tests.
 - The feature branch was merged; `main` is now the integration branch. No live Verigate endpoint, live QDay RPC, deployed router or testnet payment was exercised in this session. Those remain external demo blockers, not CI failures.
 - Next: verify post-merge CI on `main`, then proceed to live Verigate/QDay configuration and testnet deployment. Do not enable multi-worker/multi-replica operation until the remaining concurrency acceptance tests pass.
+
+
+## Session update — 2026-11-19 (nonce-gap fix and testnet deployment automation)
+
+- Current working branch is `main`. The PostgreSQL runtime and Verigate envelope hardening remain integrated.
+- Found a critical PostgreSQL nonce-gap bug: a deterministic Verigate rejection before consume left a reserved nonce active. Subsequent payments allocated above the gap and could remain stuck behind the missing nonce.
+- TDD evidence for safe release: test-only commit `30bfa88d054320a795a972dd8c3242864dff03c1` failed as expected (**2 failed, 45 passed**) because `release_nonce_reservation` did not exist.
+- Implemented safe release: only a payment in REJECTED state with `authorization_consumed=FALSE` can release its reservation. The reservation row is retained as `ABANDONED`; a partial unique index protects active nonce claims, and allocation now chooses the lowest available nonce at or above the RPC pending nonce. Ambiguous consume outcomes keep the reservation and signed bytes.
+- Wired the Gateway rejection path to call this release method. Pre-consume preflight HTTP 5xx errors are normalized to a safe pre-consume failure; failures after the consume request begins remain ambiguous and preserve the reservation.
+- TDD evidence for legacy migration: test-only commit `0550af554514fb175502bfac58040967f070d085` failed as expected (**47 passed, 1 failed**) because old REJECTED/unconsumed rows remained active.
+- Added startup migration to mark legacy REJECTED/unconsumed reservations ABANDONED, so databases created before this fix do not keep nonce gaps forever.
+- Gateway CI passed on commit `d9d177bed48a3e3de9444467f9e74c49f0919017`: **48 passed**, PostgreSQL 16 integration tests and Docker image build successful. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44538035891.
+- Gateway CI passed after app-level release wiring on `4644faa7cd0d9adea0ec86d0cd1210afba8e2896`: **47 passed**, Docker build successful. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44537720641.
+- Solidity CI passed on `d9d177bed48a3e3de9444467f9e74c49f0919017`: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44538036065.
+- Added manual GitHub Actions workflow `.github/workflows/qday-testnet-verify.yml` to verify live chain ID, block height, tUSD8 bytecode, name, symbol and decimals from a hosted runner.
+- Added guarded manual deployment workflow `.github/workflows/deploy-aevumpay.yml`. It checks the RPC, chain ID, tUSD8 bytecode/decimals, deployer-owner key match and gas balance; deploys the router, enables tUSD8, verifies owner/executor/token support, and publishes deployment artifact/address.
+- Deployment workflow requires GitHub Actions secrets `AEVUMPAY_DEPLOYER_PRIVATE_KEY`, `AEVUMPAY_OWNER`, and `AEVUMPAY_EXECUTOR`. Secret values are not present in the repository and must be configured by the owner. Gateway runtime still separately needs `AEVUMPAY_EXECUTOR_PRIVATE_KEY`, `AEVUMPAY_API_KEY`, `AEVUMPAY_TX_ENCRYPTION_KEY`, `VERIGATE_URL`, `VERIGATE_API_KEY`, pinned issuer public key, identity/capability IDs and deployed router address.
+- Official QDay site currently confirms Aevum Testnet is live with chain ID 44005 and identifies the QDay testnet RPC; the Builder Challenge page lists tUSD8 at the documented contract address and says the faucet is available. This is external published information, not a successful RPC call from this project runtime.
+- Still not live-verified by AevumPay: RPC eth_chainId/block number, tUSD8 bytecode/decimals, router deployment, Verigate authorize/consume, approval and payment receipt. The manual verification workflow must be run in GitHub Actions first; the deployment workflow can then be run after secrets are configured.
+- Latest checkpoint preparation HEAD before this append: `d3b2238c275a9144efa2a9d6f16d0860b9537f36`. Gateway CI was running; Solidity CI had passed. Re-check CI on the resulting latest `main` HEAD before calling it green.
+- Do not enable multiple Uvicorn workers/replicas until cross-process execution and crash/recovery acceptance tests are complete. PostgreSQL nonce allocation is process-safe; the full Verigate-consume-to-broadcast critical section is not yet proven across multiple replicas.
