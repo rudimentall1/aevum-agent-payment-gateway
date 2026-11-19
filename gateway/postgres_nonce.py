@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-from contextlib import closing
-
 import psycopg
 from psycopg.rows import dict_row
 
@@ -93,7 +91,3 @@ class PostgresNonceStore:
             )
             return nonce
 
-    def reset_for_test(self) -> None:
-        """Clear reservations. Never call from application runtime."""
-        with self._connect() as db:
-            db.execute("TRUNCATE TABLE aevumpay_nonce_reservations")
