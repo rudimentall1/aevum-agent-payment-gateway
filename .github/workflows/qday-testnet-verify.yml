@@ -1,0 +1,41 @@
+name: Verify QDay Testnet
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      QDAY_RPC_URL: https://rpc-test.qday.info
+      EXPECTED_CHAIN_ID: "44005"
+      TUSD8: "0x456569838f1d43009A91ebA4263147Afd7233483"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Verify Aevum RPC and tUSD8
+        shell: bash
+        run: |
+          set -euo pipefail
+          chain_id="$(cast chain-id --rpc-url "$QDAY_RPC_URL")"
+          test "$chain_id" = "$EXPECTED_CHAIN_ID"
+          block_number="$(cast block-number --rpc-url "$QDAY_RPC_URL")"
+          token_code="$(cast code "$TUSD8" --rpc-url "$QDAY_RPC_URL")"
+          test "$token_code" != "0x"
+          decimals="$(cast call "$TUSD8" "decimals()(uint8)" --rpc-url "$QDAY_RPC_URL")"
+          test "$decimals" = "6"
+          symbol="$(cast call "$TUSD8" "symbol()(string)" --rpc-url "$QDAY_RPC_URL")"
+          name="$(cast call "$TUSD8" "name()(string)" --rpc-url "$QDAY_RPC_URL")"
+          {
+            echo "## QDay Aevum Testnet verification"
+            echo "- Chain ID: $chain_id"
+            echo "- Latest block: $block_number"
+            echo "- tUSD8: $TUSD8"
+            echo "- Token name: $name"
+            echo "- Token symbol: $symbol"
+            echo "- Decimals: $decimals"
+            echo "- Contract bytecode: present"
+          } >> "$GITHUB_STEP_SUMMARY"
