@@ -21,12 +21,13 @@ def payment(request_id="0x" + "11" * 32):
 
 
 def test_payment_record_is_durable_and_duplicate_request_is_rejected():
-    store = PostgresPaymentStore(DATABASE_URL, Fernet.generate_key())
+    key = Fernet.generate_key()
+    store = PostgresPaymentStore(DATABASE_URL, key)
     store.reset_for_test()
     req = payment()
     store.reserve(req, 1_250_000)
 
-    restarted = PostgresPaymentStore(DATABASE_URL, store.cipher._signing_key and store.cipher._encryption_key)
+    restarted = PostgresPaymentStore(DATABASE_URL, key)
     record = restarted.get(req.request_id)
     assert record["status"] == "AUTHORIZING"
     assert record["amount_base_units"] == "1250000"
