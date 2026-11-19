@@ -26,17 +26,16 @@ QDay Aevum Testnet, chain ID 44005 (0xabe5). Test token tUSD8: `0x456569838f1d43
 
 ## Current status
 
-- EIP-712 policy router, deployment script, threat model and 15 Foundry tests are implemented. GitHub Actions compiled the contract and passed all 15 tests.
-- FastAPI gateway is implemented with typed-data, prepare, execute, status and reconciliation endpoints.
-- Gateway CI passed its unit-test suite and Docker image build on commit `3d38cfa2c186846d20e69890bf24cfafdcc016ba` (run [43856166920](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/43856166920)).
-- Gateway CI passed all 27 tests and built the Docker image after executor nonce serialization (run [44037402225](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402225)).
-- Gateway CI passed all 29 tests and built the Docker image after crash-recovery regression coverage (run [44048575495](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44048575495)).
-- Solidity CI passed on the same commit (run [44048575476](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44048575476)).
-- Solidity CI passed on the same code commit (run [44037402131](https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44037402131)).
-- These CI results are tied to their recorded commits/runs; they are not a claim that the latest documentation-only HEAD has been re-run.
+- EIP-712 policy router, deployment script, threat model and 15 Foundry tests are implemented.
+- FastAPI gateway exposes typed-data, prepare, execute, status and reconciliation endpoints.
+- PostgreSQL payment ledger is integrated as an explicit opt-in runtime backend through `AEVUMPAY_DATABASE_URL`; SQLite remains the default.
+- PostgreSQL uses durable nonce reservations, encrypted signed-transaction storage and a durable Verigate-consumed marker. A definitively rejected, unconsumed payment can release its nonce for safe reuse while preserving an audit row. Ambiguous consume outcomes retain the reservation and signed bytes for manual reconciliation.
+- Gateway CI runs unit and PostgreSQL integration tests and builds the Docker image. Solidity CI compiles the router and runs Foundry tests.
+- Latest verified pre-fix main commit `a7fc4b25e85bcb1ffda86a3ebe0ad1cfc6560a59`: Gateway CI and Solidity CI passed (45 Gateway tests; Docker build successful).
+- A regression test then exposed a PostgreSQL nonce-gap bug after safe Verigate rejection. The fix and its full CI verification are in progress; check the latest Actions status before treating current main as green.
 - The router has not been deployed to Aevum. No AevumPay testnet payment has been sent. The gateway has not been live-integrated with Verigate.
 
-See [session checkpoint](SESSION-CHECKPOINT.md) for evidence status and next steps.
+See [network configuration](docs/NETWORK_CONFIG.md), [gateway setup](gateway/README.md), and [session checkpoint](SESSION-CHECKPOINT.md) for exact evidence and remaining external requirements.
 
 ## Scope and safety
 
