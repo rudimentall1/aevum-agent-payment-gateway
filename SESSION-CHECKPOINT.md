@@ -148,3 +148,18 @@ At the beginning of every session:
 - Latest branch HEAD at checkpoint preparation: 09eb3625a7d2119d945aca5b474baf2c28d3ce31. Solidity CI run 44534946082 completed successfully. Gateway CI run 44534946483 is still in progress; its result must be checked before treating the latest code as green.
 - Still not verified: full Gateway CI for the latest HEAD; process-level crash/restart under concurrent execution; end-to-end Verigate integration; live QDay RPC; contract deployment; testnet payment. PostgreSQL mode remains experimental and multiple workers/replicas remain unsupported until the full acceptance suite passes.
 - Next: inspect Gateway CI for the latest HEAD; fix any failures; then run/extend the complete PostgreSQL acceptance suite for crash points around reservation, signing, consume, broadcast and reconciliation. Keep main untouched.
+
+
+## Session update — 2026-11-19 (PostgreSQL runtime merged to main)
+
+- Merged PR #4: https://github.com/rudimentall1/aevum-agent-payment-gateway/pull/4
+- Merge method: squash. Merge commit / current main HEAD at merge time: `ffaa776aceb197c43c099d41720b4ab62f069321`.
+- The 32-commit `feat/postgres-ledger` change set was merged, including PostgreSQL payment storage, linked durable nonce reservations, explicit runtime backend selection, reconciliation after store/process restart, tests, CI PostgreSQL service and documentation.
+- SQLite remains the default unless `AEVUMPAY_DATABASE_URL` is explicitly configured. PostgreSQL mode requires `AEVUMPAY_TX_ENCRYPTION_KEY`. Multiple workers/replicas remain unsupported pending cross-process execution-lock and full crash-recovery validation.
+- Fixed a malformed Verigate authorization input bug. Before the fix, a non-object authorization envelope or non-object payload raised an uncaught `AttributeError`. Added regression tests first: Gateway CI on test-only commit `e18bb7fc81377322c15b1085f42655415b658bd5` reproduced both failures (**2 failed, 43 passed**). Added explicit dictionary-shape validation in `verify_execution_authorization`; tests now pass.
+- Final code HEAD before merge: `f62e6d2f2fef84c86a70a0d95d49f497ada8f685`.
+- Gateway CI passed on that exact HEAD: **45 tests passed** and Docker image build succeeded. Push run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44536694896.
+- Solidity CI passed on the same HEAD: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44536694886. PR-triggered Solidity CI also passed: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44536718083.
+- Stale PR #3 was closed as superseded by PR #4; no changes were lost because its malformed-envelope hardening is covered by the merged implementation and regression tests.
+- The feature branch was merged; `main` is now the integration branch. No live Verigate endpoint, live QDay RPC, deployed router or testnet payment was exercised in this session. Those remain external demo blockers, not CI failures.
+- Next: verify post-merge CI on `main`, then proceed to live Verigate/QDay configuration and testnet deployment. Do not enable multi-worker/multi-replica operation until the remaining concurrency acceptance tests pass.
