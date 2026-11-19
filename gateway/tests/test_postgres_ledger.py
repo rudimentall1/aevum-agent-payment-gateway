@@ -2,6 +2,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from cryptography.fernet import Fernet
 
 from gateway.postgres_ledger import PostgresPaymentStore
@@ -32,8 +33,9 @@ def test_payment_record_is_durable_and_duplicate_request_is_rejected():
     assert record["status"] == "AUTHORIZING"
     assert record["amount_base_units"] == "1250000"
 
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPException) as exc:
         store.reserve(req, 1_250_000)
+    assert exc.value.status_code == 409
 
 
 def test_signed_transaction_and_consume_marker_are_atomic_and_durable():
@@ -61,7 +63,8 @@ def test_signed_transaction_and_consume_marker_are_atomic_and_durable():
 
 
 def test_nonce_reservation_requires_existing_payment_and_survives_restart():
-    store = PostgresPaymentStore(DATABASE_URL, Fernet.generate_key())
+    key = Fernet.generate_key()
+    store = PostgresPaymentStore(DATABASE_URL, key)
     store.reset_for_test()
     executor = "0x000000000000000000000000000000000000aE02"
     with pytest.raises(ValueError, match="payment"):
@@ -70,7 +73,7 @@ def test_nonce_reservation_requires_existing_payment_and_survives_restart():
     req = payment("0x" + "22" * 32)
     store.reserve(req, 5)
     assert store.reserve_nonce(44005, executor, 3, req.request_id) == 3
-    restarted = PostgresPaymentStore(DATABASE_URL, store.cipher._signing_key and store.cipher._encryption_key)
+    restarted = PostgresPaymentStore(DATABASE_URL, key)
     assert restarted.reserve_nonce(44005, executor, 3, req.request_id) == 3
 
 
