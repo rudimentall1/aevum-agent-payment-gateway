@@ -3,12 +3,18 @@ import os
 import time
 
 import pytest
+import psycopg
 
 from gateway.postgres_nonce import PostgresNonceStore
 
 
 DATABASE_URL = os.getenv("AEVUMPAY_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="PostgreSQL integration URL is not configured")
+
+
+def reset_nonce_table():
+    with psycopg.connect(DATABASE_URL) as db:
+        db.execute("TRUNCATE TABLE aevumpay_nonce_reservations")
 
 
 def _reserve_worker(database_url, chain_id, executor, pending_nonce, request_id, barrier, queue):
@@ -28,7 +34,7 @@ def _reserve_worker(database_url, chain_id, executor, pending_nonce, request_id,
 
 def test_independent_processes_reserve_distinct_sequential_nonces():
     store = PostgresNonceStore(DATABASE_URL)
-    store.reset_for_test()
+    reset_nonce_table()
     ctx = multiprocessing.get_context("spawn")
     workers = 6
     barrier = ctx.Barrier(workers)
@@ -64,7 +70,7 @@ def test_duplicate_request_id_cannot_claim_two_nonces():
 def test_reservation_survives_store_restart_and_is_not_recycled():
     executor = "0x000000000000000000000000000000000000aE03"
     first_store = PostgresNonceStore(DATABASE_URL)
-    first_store.reset_for_test()
+    reset_nonce_table()
     assert first_store.reserve_nonce(44005, executor, 12, "crashed-request") == 12
 
     restarted_store = PostgresNonceStore(DATABASE_URL)
