@@ -76,6 +76,18 @@ class PostgresPaymentStore:
                 ON aevumpay_payment_nonce_reservations (chain_id, executor_address, nonce)
                 WHERE state NOT IN ('ABANDONED', 'RELEASED')
             """)
+            # Before safe release existed, definitive REJECTED payments kept
+            # their nonce forever. These rows cannot have been broadcast:
+            # the Gateway broadcasts only after the durable consume marker.
+            db.execute("""
+                UPDATE aevumpay_payment_nonce_reservations AS reservation
+                SET state='ABANDONED', updated_at=%s
+                FROM aevumpay_payments AS payment
+                WHERE reservation.request_id=payment.request_id
+                  AND payment.status='REJECTED'
+                  AND payment.authorization_consumed=FALSE
+                  AND reservation.state NOT IN ('ABANDONED', 'RELEASED')
+            """, (int(time.time()),))
 
     @staticmethod
     def _lock_key(chain_id: int, executor_address: str) -> int:
