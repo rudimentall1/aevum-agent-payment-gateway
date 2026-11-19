@@ -31,9 +31,11 @@ QDay Aevum Testnet, chain ID 44005 (0xabe5). Test token tUSD8: `0x456569838f1d43
 - PostgreSQL payment ledger is integrated as an explicit opt-in runtime backend through `AEVUMPAY_DATABASE_URL`; SQLite remains the default.
 - PostgreSQL uses durable nonce reservations, encrypted signed-transaction storage and a durable Verigate-consumed marker. A definitively rejected, unconsumed payment can release its nonce for safe reuse while preserving an audit row. Ambiguous consume outcomes retain the reservation and signed bytes for manual reconciliation.
 - Gateway CI runs unit and PostgreSQL integration tests and builds the Docker image. Solidity CI compiles the router and runs Foundry tests.
-- Latest verified pre-fix main commit `a7fc4b25e85bcb1ffda86a3ebe0ad1cfc6560a59`: Gateway CI and Solidity CI passed (45 Gateway tests; Docker build successful).
-- A regression test then exposed a PostgreSQL nonce-gap bug after safe Verigate rejection. The fix and its full CI verification are in progress; check the latest Actions status before treating current main as green.
-- The router has not been deployed to Aevum. No AevumPay testnet payment has been sent. The gateway has not been live-integrated with Verigate.
+- Fixed a PostgreSQL nonce-gap bug after a definitive pre-consume rejection. Rejected, unconsumed reservations are now retained as ABANDONED audit rows and their nonce can be safely reused; startup migrates legacy REJECTED/unconsumed rows.
+- Gateway CI passed on commit `159f68dd564ae7027d4a6ec079d0d12e6980d86e`: **48 tests passed** against PostgreSQL 16 and the Docker image built successfully. Run: https://github.com/rudimentall1/aevum-agent-payment-gateway/actions/runs/44538122595.
+- Solidity CI also passed on that commit. Later commits add manual QDay verification/deployment workflows and documentation; check the latest Actions run for the current HEAD before claiming it green.
+- Added a manual QDay RPC/token verification workflow and a guarded router deployment workflow. Deployment requires GitHub repository secrets `AEVUMPAY_DEPLOYER_PRIVATE_KEY`, `AEVUMPAY_OWNER`, and `AEVUMPAY_EXECUTOR`.
+- The router has not yet been deployed to Aevum. No AevumPay testnet payment has been sent. The gateway has not been live-integrated with Verigate.
 
 See [network configuration](docs/NETWORK_CONFIG.md), [gateway setup](gateway/README.md), and [session checkpoint](SESSION-CHECKPOINT.md) for exact evidence and remaining external requirements.
 
